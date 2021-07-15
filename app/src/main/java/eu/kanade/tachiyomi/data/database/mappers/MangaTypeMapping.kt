@@ -27,13 +27,13 @@ import eu.kanade.tachiyomi.data.database.tables.MangaTable.COL_INITIALIZED
 import eu.kanade.tachiyomi.data.database.tables.MangaTable.COL_KITSU_ID
 import eu.kanade.tachiyomi.data.database.tables.MangaTable.COL_LANG_FLAG
 import eu.kanade.tachiyomi.data.database.tables.MangaTable.COL_LAST_UPDATE
-import eu.kanade.tachiyomi.data.database.tables.MangaTable.COL_NEXT_UPDATE
 import eu.kanade.tachiyomi.data.database.tables.MangaTable.COL_MANGA_LAST_CHAPTER
 import eu.kanade.tachiyomi.data.database.tables.MangaTable.COL_MANGA_UPDATES_ID
 import eu.kanade.tachiyomi.data.database.tables.MangaTable.COL_MERGE_MANGA_IMAGE_URL
 import eu.kanade.tachiyomi.data.database.tables.MangaTable.COL_MERGE_MANGA_URL
 import eu.kanade.tachiyomi.data.database.tables.MangaTable.COL_MISSING_CHAPTERS
 import eu.kanade.tachiyomi.data.database.tables.MangaTable.COL_MY_ANIME_LIST_ID
+import eu.kanade.tachiyomi.data.database.tables.MangaTable.COL_NEXT_UPDATE
 import eu.kanade.tachiyomi.data.database.tables.MangaTable.COL_RATING
 import eu.kanade.tachiyomi.data.database.tables.MangaTable.COL_SCANLATOR_FILTER_FLAG
 import eu.kanade.tachiyomi.data.database.tables.MangaTable.COL_SOURCE
@@ -68,20 +68,19 @@ class MangaPutResolver : DefaultPutResolver<Manga>() {
         put(COL_ID, obj.id)
         put(COL_SOURCE, obj.source)
         put(COL_URL, obj.url)
-        put(COL_ARTIST, obj.originalArtist)
-        put(COL_AUTHOR, obj.originalAuthor)
-        put(COL_DESCRIPTION, obj.originalDescription)
-        put(COL_GENRE, obj.originalGenre)
-        put(COL_TITLE, obj.originalTitle)
+        put(COL_ARTIST, obj.artist)
+        put(COL_AUTHOR, obj.author)
+        put(COL_DESCRIPTION, obj.description)
+        put(COL_GENRE, obj.genre)
+        put(COL_TITLE, obj.title)
         put(COL_STATUS, obj.status)
         put(COL_THUMBNAIL_URL, obj.thumbnail_url)
         put(COL_FAVORITE, obj.favorite)
         put(COL_LAST_UPDATE, obj.last_update)
         put(COL_NEXT_UPDATE, obj.next_update)
         put(COL_INITIALIZED, obj.initialized)
-        put(COL_VIEWER, obj.viewer)
+        put(COL_VIEWER, obj.viewer_flags)
         put(COL_CHAPTER_FLAGS, obj.chapter_flags)
-        put(COL_DATE_ADDED, obj.date_added)
         put(COL_DATE_ADDED, obj.date_added)
         put(COL_LANG_FLAG, obj.lang_flag)
         put(COL_FOLLOW_STATUS, obj.follow_status?.int)
@@ -116,7 +115,7 @@ interface BaseMangaGetResolver {
         last_update = cursor.getLong(cursor.getColumnIndex(COL_LAST_UPDATE))
         next_update = cursor.getLong(cursor.getColumnIndex(COL_NEXT_UPDATE))
         initialized = cursor.getInt(cursor.getColumnIndex(COL_INITIALIZED)) == 1
-        viewer = cursor.getInt(cursor.getColumnIndex(COL_VIEWER))
+        viewer_flags = cursor.getInt(cursor.getColumnIndex(COL_VIEWER))
         chapter_flags = cursor.getInt(cursor.getColumnIndex(COL_CHAPTER_FLAGS))
         date_added = cursor.getLong(cursor.getColumnIndex(COL_DATE_ADDED))
         lang_flag = cursor.getString(cursor.getColumnIndex(COL_LANG_FLAG))

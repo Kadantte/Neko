@@ -2,20 +2,30 @@ package eu.kanade.tachiyomi.data.cache
 
 import android.content.Context
 import android.text.format.Formatter
-import com.github.salomonbrys.kotson.fromJson
-import com.google.gson.Gson
+import com.elvishew.xlog.XLog
 import com.jakewharton.disklrucache.DiskLruCache
 import eu.kanade.tachiyomi.data.database.models.Chapter
+import eu.kanade.tachiyomi.data.preference.PreferencesHelper
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.util.storage.DiskUtil
 import eu.kanade.tachiyomi.util.storage.saveTo
+import kotlinx.coroutines.CoroutineScope
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.Job
+import kotlinx.coroutines.flow.drop
+import kotlinx.coroutines.flow.launchIn
+import kotlinx.coroutines.flow.onEach
+import kotlinx.serialization.decodeFromString
+import kotlinx.serialization.encodeToString
+import kotlinx.serialization.json.Json
 import okhttp3.Response
 import okio.buffer
 import okio.sink
-import rx.Observable
 import uy.kohesive.injekt.injectLazy
 import java.io.File
 import java.io.IOException
+import kotlin.math.pow
+import kotlin.math.roundToLong
 
 /**
  * Class used to create chapter cache
@@ -39,19 +49,18 @@ class ChapterCache(private val context: Context) {
         const val PARAMETER_VALUE_COUNT = 1
 
         /** The maximum number of bytes this cache should use to store.  */
-        const val PARAMETER_CACHE_SIZE = 75L * 1024 * 1024
+        const val PARAMETER_CACHE_SIZE = 50L * 1024 * 1024
     }
 
     /** Google Json class used for parsing JSON files.  */
-    private val gson: Gson by injectLazy()
+    private val json: Json by injectLazy()
+
+    private val preferences: PreferencesHelper by injectLazy()
+
+    private val scope = CoroutineScope(Job() + Dispatchers.IO)
 
     /** Cache class used for cache management.  */
-    private val diskCache = DiskLruCache.open(
-        File(context.cacheDir, PARAMETER_CACHE_DIRECTORY),
-        PARAMETER_APP_VERSION,
-        PARAMETER_VALUE_COUNT,
-        PARAMETER_CACHE_SIZE
-    )
+    private var diskCache = setupDiskCache(preferences.preloadSize().get())
 
     /**
      * Returns directory of cache.
@@ -71,6 +80,28 @@ class ChapterCache(private val context: Context) {
     val readableSize: String
         get() = Formatter.formatFileSize(context, realSize)
 
+    init {
+        preferences.preloadSize().asFlow()
+            .drop(1)
+            .onEach {
+                // Save old cache for destruction later
+                val oldCache = diskCache
+                diskCache = setupDiskCache(it)
+                oldCache.close()
+            }
+            .launchIn(scope)
+    }
+
+    private fun setupDiskCache(cacheSize: Int): DiskLruCache {
+        return DiskLruCache.open(
+            File(context.cacheDir, PARAMETER_CACHE_DIRECTORY),
+            PARAMETER_APP_VERSION,
+            PARAMETER_VALUE_COUNT,
+            // 4 pages = 115MB, 6 = ~150MB, 10 = ~200MB, 20 = ~300MB
+            (PARAMETER_CACHE_SIZE * cacheSize.toFloat().pow(0.6f)).roundToLong()
+        )
+    }
+
     /**
      * Remove file from cache.
      *
@@ -78,9 +109,11 @@ class ChapterCache(private val context: Context) {
      * @return status of deletion for the file.
      */
     fun removeFileFromCache(file: String): Boolean {
+        XLog.d("remove file from cache")
         // Make sure we don't delete the journal file (keeps track of cache).
-        if (file == "journal" || file.startsWith("journal."))
+        if (file == "journal" || file.startsWith("journal.")) {
             return false
+        }
 
         try {
             // Remove the extension from the file to get the key of the cache
@@ -88,7 +121,10 @@ class ChapterCache(private val context: Context) {
             // Remove file from cache.
             return diskCache.remove(key)
         } catch (e: Exception) {
+            XLog.e(e)
             return false
+        } finally {
+            XLog.d("finished removing file from cache")
         }
     }
 
@@ -96,17 +132,17 @@ class ChapterCache(private val context: Context) {
      * Get page list from cache.
      *
      * @param chapter the chapter.
-     * @return an observable of the list of pages.
+     * @return the list of pages.
      */
-    fun getPageListFromCache(chapter: Chapter): Observable<List<Page>> {
-        return Observable.fromCallable {
-            // Get the key for the chapter.
-            val key = DiskUtil.hashKeyForDisk(getKey(chapter))
+    fun getPageListFromCache(chapter: Chapter): List<Page> {
+        // Get the key for the chapter.
+        XLog.d("get image pageList from cache")
 
-            // Convert JSON string to list of objects. Throws an exception if snapshot is null
-            diskCache.get(key).use {
-                gson.fromJson<List<Page>>(it.getString(0))
-            }
+        val key = DiskUtil.hashKeyForDisk(getKey(chapter))
+
+        // Convert JSON string to list of objects. Throws an exception if snapshot is null
+        return diskCache.get(key).use {
+            json.decodeFromString(it.getString(0))
         }
     }
 
@@ -118,7 +154,8 @@ class ChapterCache(private val context: Context) {
      */
     fun putPageListToCache(chapter: Chapter, pages: List<Page>) {
         // Convert list of pages to json string.
-        val cachedValue = gson.toJson(pages)
+        val cachedValue = json.encodeToString(pages)
+        XLog.d("put page list to cache $cachedValue")
 
         // Initialize the editor (edits the values for an entry).
         var editor: DiskLruCache.Editor? = null
@@ -138,8 +175,10 @@ class ChapterCache(private val context: Context) {
             editor.commit()
             editor.abortUnlessCommitted()
         } catch (e: Exception) {
+            XLog.e(e)
             // Ignore.
         } finally {
+            XLog.d("finishing putting pagelist to cache")
             editor?.abortUnlessCommitted()
         }
     }
@@ -152,8 +191,10 @@ class ChapterCache(private val context: Context) {
      */
     fun isImageInCache(imageUrl: String): Boolean {
         return try {
+            XLog.d("is image in cache $imageUrl")
             diskCache.get(DiskUtil.hashKeyForDisk(imageUrl)) != null
         } catch (e: IOException) {
+            XLog.e(e)
             false
         }
     }
@@ -166,6 +207,7 @@ class ChapterCache(private val context: Context) {
      */
     fun getImageFile(imageUrl: String): File {
         // Get file from md5 key.
+        XLog.d("get image file $imageUrl")
         val imageName = DiskUtil.hashKeyForDisk(imageUrl) + ".0"
         return File(diskCache.directory, imageName)
     }
@@ -181,7 +223,7 @@ class ChapterCache(private val context: Context) {
     fun putImageToCache(imageUrl: String, response: Response) {
         // Initialize editor (edits the values for an entry).
         var editor: DiskLruCache.Editor? = null
-
+        XLog.d("put image to cache $imageUrl")
         try {
             // Get editor from md5 key.
             val key = DiskUtil.hashKeyForDisk(imageUrl)
@@ -192,13 +234,17 @@ class ChapterCache(private val context: Context) {
 
             diskCache.flush()
             editor.commit()
+        } catch (e: Exception) {
+            XLog.e(e)
         } finally {
             response.body?.close()
             editor?.abortUnlessCommitted()
+            XLog.d("finished image to cache $imageUrl")
         }
     }
 
     private fun getKey(chapter: Chapter): String {
+        XLog.d("get key")
         return "${chapter.manga_id}${chapter.url}"
     }
 }

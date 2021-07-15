@@ -13,7 +13,7 @@ import eu.kanade.tachiyomi.data.preference.getOrDefault
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.SourceManager
 import eu.kanade.tachiyomi.source.model.isMergedChapter
-import eu.kanade.tachiyomi.source.online.utils.MdUtil
+import eu.kanade.tachiyomi.util.lang.isUUID
 import eu.kanade.tachiyomi.util.storage.DiskUtil
 import uy.kohesive.injekt.injectLazy
 
@@ -50,7 +50,6 @@ class DownloadProvider(private val context: Context) {
      * @param manga the manga to query.
      * @param source the source of the manga.
      */
-    @Synchronized
     internal fun getMangaDir(manga: Manga, source: Source): UniFile {
         try {
             return downloadsDir.createDirectory(getSourceDirName(source))
@@ -67,7 +66,7 @@ class DownloadProvider(private val context: Context) {
      * @param source the source to query.
      */
     fun findSourceDir(source: Source): UniFile? {
-        return downloadsDir.findFile(getSourceDirName(source))
+        return downloadsDir.findFile(getSourceDirName(source), true)
     }
 
     /**
@@ -78,7 +77,7 @@ class DownloadProvider(private val context: Context) {
      */
     fun findMangaDir(manga: Manga, source: Source): UniFile? {
         val sourceDir = findSourceDir(source)
-        return sourceDir?.findFile(getMangaDirName(manga))
+        return sourceDir?.findFile(getMangaDirName(manga), true)
     }
 
     /**
@@ -93,9 +92,11 @@ class DownloadProvider(private val context: Context) {
         return if (chapter.isMergedChapter()) {
             mangaDir?.findFile(getJ2kChapterName(chapter))
         } else {
-            var dir = getValidChapterDirNames(chapter).mapNotNull { mangaDir?.findFile(it) }.firstOrNull()
+            var dir =
+                getValidChapterDirNames(chapter).mapNotNull { mangaDir?.findFile(it) }.firstOrNull()
             if (dir == null) {
-                dir = mangaDir?.listFiles()?.find { it.name != null && it.name!!.endsWith(chapter.mangadex_chapter_id) }
+                dir = mangaDir?.listFiles()
+                    ?.find { it.name != null && it.name!!.endsWith(chapter.mangadex_chapter_id) }
             }
             dir
         }
@@ -112,20 +113,26 @@ class DownloadProvider(private val context: Context) {
         val mangaDir = findMangaDir(manga, source) ?: return emptyList()
 
         val idHashSet = chapters.map { it.mangadex_chapter_id }.toHashSet()
+        val oldIdHashSet = chapters.mapNotNull { it.old_mangadex_id }.toHashSet()
         val chapterNameHashSet = chapters.map { it.name }.toHashSet()
         val scanalatorNameHashSet = chapters.map { getJ2kChapterName(it) }.toHashSet()
 
         return mangaDir.listFiles()!!.asList().filter { file ->
             file.name?.let { fileName ->
                 val mangadexId = fileName.substringAfterLast(" - ", "")
-                if (mangadexId.isNotEmpty() && mangadexId.isDigitsOnly()) {
+                // legacy dex id
+                if (mangadexId.isNotEmpty() && mangadexId.isUUID()) {
                     return@filter idHashSet.contains(mangadexId)
+                } else if (mangadexId.isNotEmpty() && mangadexId.isDigitsOnly()) {
+                    return@filter oldIdHashSet.contains(mangadexId)
                 } else {
                     if (scanalatorNameHashSet.contains(fileName)) {
                         return@filter true
                     }
                     val afterScanlatorCheck = fileName.substringAfter("_")
-                    return@filter chapterNameHashSet.contains(fileName) || chapterNameHashSet.contains(afterScanlatorCheck)
+                    return@filter chapterNameHashSet.contains(fileName) || chapterNameHashSet.contains(
+                        afterScanlatorCheck
+                    )
                 }
             }
             return@filter false
@@ -142,7 +149,7 @@ class DownloadProvider(private val context: Context) {
     fun findUnmatchedChapterDirs(
         chapters: List<Chapter>,
         manga: Manga,
-        source: Source
+        source: Source,
     ): List<UniFile> {
         val mangaDir = findMangaDir(manga, source) ?: return emptyList()
         val idHashSet = chapters.map { it.mangadex_chapter_id }.toHashSet()
@@ -155,14 +162,16 @@ class DownloadProvider(private val context: Context) {
                     return@filter true
                 }
                 val mangadexId = fileName.substringAfterLast("- ", "")
-                if (mangadexId.isNotEmpty() && mangadexId.isDigitsOnly()) {
+                if (mangadexId.isNotEmpty() && (mangadexId.isDigitsOnly() || mangadexId.isUUID())) {
                     return@filter !idHashSet.contains(mangadexId)
                 } else {
                     if (scanalatorNameHashSet.contains(fileName)) {
                         return@filter false
                     }
                     val afterScanlatorCheck = fileName.substringAfter("_")
-                    return@filter !chapterNameHashSet.contains(fileName) && !chapterNameHashSet.contains(afterScanlatorCheck)
+                    return@filter !chapterNameHashSet.contains(fileName) && !chapterNameHashSet.contains(
+                        afterScanlatorCheck
+                    )
                 }
             }
             // everything else is considered true
@@ -205,7 +214,7 @@ class DownloadProvider(private val context: Context) {
      * @param manga the manga to query.
      */
     fun getMangaDirName(manga: Manga): String {
-        return DiskUtil.buildValidFilename(manga.originalTitle)
+        return DiskUtil.buildValidFilename(manga.title)
     }
 
     /**
@@ -213,12 +222,15 @@ class DownloadProvider(private val context: Context) {
      *
      * @param chapter the chapter to query.
      */
-    fun getChapterDirName(chapter: Chapter): String {
+    fun getChapterDirName(chapter: Chapter, useNewId: Boolean = true): String {
         if (chapter.isMergedChapter()) {
             return getJ2kChapterName(chapter)
         } else {
-            val chapterId = if (chapter.mangadex_chapter_id.isNotBlank()) chapter.mangadex_chapter_id else MdUtil.getChapterId(chapter.url)
-            return DiskUtil.buildValidFilename(chapter.name + " - " + chapterId)
+            if (useNewId.not() && chapter.old_mangadex_id == null) {
+                return ""
+            }
+            val chapterId = if (useNewId) chapter.mangadex_chapter_id else chapter.old_mangadex_id
+            return DiskUtil.buildValidFilename(chapter.name, " - $chapterId")
         }
     }
 
@@ -236,11 +248,13 @@ class DownloadProvider(private val context: Context) {
      */
     fun getValidChapterDirNames(chapter: Chapter): List<String> {
         return listOf(
-            getChapterDirName(chapter),
+            getChapterDirName(chapter, true),
             // chater names from j2k
             getJ2kChapterName(chapter),
+            // legacy manga id
+            getChapterDirName(chapter, false),
             // Legacy chapter directory name used in v0.8.4 and before
             DiskUtil.buildValidFilename(chapter.name)
-        )
+        ).filter { it.isNotEmpty() }
     }
 }

@@ -2,40 +2,40 @@ package eu.kanade.tachiyomi.widget.preference
 
 import android.os.Bundle
 import android.view.View
+import androidx.annotation.StringRes
 import br.com.simplepass.loadingbutton.animatedDrawables.ProgressType
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.track.TrackManager
 import eu.kanade.tachiyomi.data.track.TrackService
 import eu.kanade.tachiyomi.util.system.toast
-import kotlinx.android.synthetic.main.pref_account_login.view.*
 import kotlinx.coroutines.launch
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 
-class TrackLoginDialog(usernameLabel: String? = null, bundle: Bundle? = null) :
-    LoginDialogPreference(usernameLabel, bundle) {
+class TrackLoginDialog(@StringRes usernameLabelRes: Int? = null, bundle: Bundle? = null) :
+    LoginDialogPreference(usernameLabelRes, bundle) {
 
     private val service = Injekt.get<TrackManager>().getService(args.getInt("key"))!!
 
     override var canLogout = true
 
-    constructor(service: TrackService, usernameLabel: String?) :
-        this(usernameLabel, Bundle().apply { putInt("key", service.id) })
+    constructor(service: TrackService, @StringRes usernameLabelRes: Int?) :
+        this(usernameLabelRes, Bundle().apply { putInt("key", service.id) })
 
     override fun setCredentialsOnView(view: View) = with(view) {
-        dialog_title.text = context.getString(R.string.log_in_to_, service.name)
-        username.setText(service.getUsername())
-        password.setText(service.getPassword())
+        val serviceName = context.getString(service.nameRes())
+        binding.dialogTitle.text = context.getString(R.string.log_in_to_, serviceName)
+        binding.username.setText(service.getUsername())
+        binding.password.setText(service.getPassword())
     }
 
     override fun checkLogin() {
-
         v?.apply {
-            login.apply {
+            binding.login.apply {
                 progressType = ProgressType.INDETERMINATE
                 startAnimation()
             }
-            if (username.text.isNullOrBlank() || password.text.isNullOrBlank()) {
+            if (binding.username.text.isNullOrBlank() || binding.password.text.isNullOrBlank()) {
                 errorResult()
                 context.toast(R.string.username_must_not_be_blank)
                 return
@@ -43,8 +43,8 @@ class TrackLoginDialog(usernameLabel: String? = null, bundle: Bundle? = null) :
 
             dialog?.setCancelable(false)
             dialog?.setCanceledOnTouchOutside(false)
-            val user = username.text.toString()
-            val pass = password.text.toString()
+            val user = binding.username.text.toString()
+            val pass = binding.password.text.toString()
             scope.launch {
                 try {
                     val result = service.login(user, pass)
@@ -66,8 +66,8 @@ class TrackLoginDialog(usernameLabel: String? = null, bundle: Bundle? = null) :
         v?.apply {
             dialog?.setCancelable(true)
             dialog?.setCanceledOnTouchOutside(true)
-            login.revertAnimation {
-                login.text = activity!!.getText(R.string.unknown_error)
+            binding.login.revertAnimation {
+                binding.login.text = activity!!.getText(R.string.unknown_error)
             }
         }
     }

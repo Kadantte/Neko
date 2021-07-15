@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.ui.source.browse
 
 import android.app.Activity
 import android.view.View
+import androidx.core.view.isVisible
 import androidx.recyclerview.widget.RecyclerView
 import coil.Coil
 import coil.clear
@@ -9,12 +10,9 @@ import coil.request.ImageRequest
 import eu.davidea.flexibleadapter.FlexibleAdapter
 import eu.davidea.flexibleadapter.items.IFlexible
 import eu.kanade.tachiyomi.data.database.models.Manga
-import eu.kanade.tachiyomi.data.database.models.potentialAltThumbnail
 import eu.kanade.tachiyomi.data.image.coil.CoverViewTarget
+import eu.kanade.tachiyomi.databinding.MangaGridItemBinding
 import eu.kanade.tachiyomi.ui.library.LibraryCategoryAdapter
-import eu.kanade.tachiyomi.util.view.gone
-import kotlinx.android.synthetic.main.manga_grid_item.*
-import kotlinx.android.synthetic.main.unread_download_badge.*
 
 /**
  * Class used to hold the displayed data of a manga in the library, like the cover or the title.
@@ -29,15 +27,17 @@ class BrowseSourceGridHolder(
     private val view: View,
     private val adapter: FlexibleAdapter<IFlexible<RecyclerView.ViewHolder>>,
     compact: Boolean,
-    private val isFollows: Boolean = false
+    private val isFollows: Boolean = false,
 ) : BrowseSourceHolder(view, adapter) {
+
+    private val binding = MangaGridItemBinding.bind(view)
 
     init {
         if (compact) {
-            text_layout.gone()
+            binding.textLayout.isVisible = false
         } else {
-            compact_title.gone()
-            gradient.gone()
+            binding.compactTitle.isVisible = false
+            binding.gradient.isVisible = false
         }
     }
 
@@ -49,11 +49,14 @@ class BrowseSourceGridHolder(
      */
     override fun onSetValues(manga: Manga) {
         // Update the title of the manga.
-        title.text = manga.title
-        compact_title.text = title.text
+        binding.title.text = manga.title
+        binding.compactTitle.text = binding.title.text
         when (isFollows) {
-            true -> badge_view.setStatus(manga.follow_status!!, manga.favorite)
-            false -> badge_view.setInLibrary(manga.favorite)
+            true -> binding.unreadDownloadBadge.root.setStatus(
+                manga.follow_status!!,
+                manga.favorite
+            )
+            false -> binding.unreadDownloadBadge.root.setInLibrary(manga.favorite)
         }
 
         // Update the cover.
@@ -63,11 +66,11 @@ class BrowseSourceGridHolder(
     override fun setImage(manga: Manga) {
         if ((view.context as? Activity)?.isDestroyed == true) return
         if (manga.thumbnail_url == null) {
-            cover_thumbnail.clear()
+            binding.coverThumbnail.clear()
         } else {
-            val id = manga.id ?: return
+            manga.id ?: return
             val request = ImageRequest.Builder(view.context).data(manga)
-                .target(CoverViewTarget(cover_thumbnail, progress, manga.potentialAltThumbnail())).build()
+                .target(CoverViewTarget(binding.coverThumbnail, binding.progress)).build()
             Coil.imageLoader(view.context).enqueue(request)
         }
     }

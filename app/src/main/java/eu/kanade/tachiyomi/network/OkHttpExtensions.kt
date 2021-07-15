@@ -1,22 +1,23 @@
 package eu.kanade.tachiyomi.network
 
+import eu.kanade.tachiyomi.source.online.utils.MdUtil
 import kotlinx.coroutines.suspendCancellableCoroutine
+import kotlinx.serialization.decodeFromString
 import okhttp3.Call
 import okhttp3.Callback
-import okhttp3.MediaType
+import okhttp3.MediaType.Companion.toMediaType
 import okhttp3.OkHttpClient
 import okhttp3.Request
 import okhttp3.Response
 import rx.Observable
 import rx.Producer
 import rx.Subscription
-import java.io.BufferedReader
 import java.io.IOException
-import java.io.InputStreamReader
 import java.util.concurrent.atomic.AtomicBoolean
-import java.util.zip.GZIPInputStream
 import kotlin.coroutines.resume
 import kotlin.coroutines.resumeWithException
+
+val jsonMime = "application/json; charset=utf-8".toMediaType()
 
 fun Call.asObservable(): Observable<Response> {
     return Observable.unsafeCreate { subscriber ->
@@ -58,17 +59,24 @@ fun Call.asObservable(): Observable<Response> {
 // Based on https://github.com/gildor/kotlin-coroutines-okhttp
 suspend fun Call.await(): Response {
     return suspendCancellableCoroutine { continuation ->
-        enqueue(object : Callback {
-            override fun onResponse(call: Call, response: Response) {
-                continuation.resume(response)
-            }
+        enqueue(
+            object : Callback {
+                override fun onResponse(call: Call, response: Response) {
+                    if (!response.isSuccessful) {
+                        continuation.resumeWithException(Exception("HTTP error ${response.code}"))
+                        return
+                    }
 
-            override fun onFailure(call: Call, e: IOException) {
-                // Don't bother with resuming the continuation if it is already cancelled.
-                if (continuation.isCancelled) return
-                continuation.resumeWithException(e)
+                    continuation.resume(response)
+                }
+
+                override fun onFailure(call: Call, e: IOException) {
+                    // Don't bother with resuming the continuation if it is already cancelled.
+                    if (continuation.isCancelled) return
+                    continuation.resumeWithException(e)
+                }
             }
-        })
+        )
 
         continuation.invokeOnCancellation {
             try {
@@ -110,24 +118,9 @@ fun OkHttpClient.newCallWithProgress(request: Request, listener: ProgressListene
     return progressClient.newCall(request)
 }
 
-fun MediaType.Companion.jsonType(): MediaType = "application/json; charset=utf-8".toMediaTypeOrNull()!!
-
-fun Response.consumeBody(): String? {
-    use {
-        if (it.code != 200) throw Exception("HTTP error ${it.code}")
-        return it.body?.string()
-    }
-}
-
-fun Response.consumeXmlBody(): String? {
-    use { res ->
-        if (res.code != 200) throw Exception("Export list error")
-        BufferedReader(InputStreamReader(GZIPInputStream(res.body?.source()?.inputStream()))).use { reader ->
-            val sb = StringBuilder()
-            reader.forEachLine { line ->
-                sb.append(line)
-            }
-            return sb.toString()
-        }
+inline fun <reified T> Response.parseAs(): T {
+    this.use {
+        val responseBody = it.body?.string().orEmpty()
+        return MdUtil.jsonParser.decodeFromString(responseBody)
     }
 }

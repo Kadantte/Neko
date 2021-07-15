@@ -1,211 +1,70 @@
 package eu.kanade.tachiyomi.source.online.handlers
 
-import eu.kanade.tachiyomi.data.preference.PreferencesHelper
-import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.network.asObservableSuccess
+import eu.kanade.tachiyomi.network.NetworkHelper
+import eu.kanade.tachiyomi.network.ProxyRetrofitQueryMap
+import eu.kanade.tachiyomi.network.services.MangaDexService
 import eu.kanade.tachiyomi.source.model.FilterList
-import eu.kanade.tachiyomi.source.model.MangasPage
-import eu.kanade.tachiyomi.source.model.SManga
+import eu.kanade.tachiyomi.source.model.MangaListPage
+import eu.kanade.tachiyomi.source.online.dto.MangaListDto
 import eu.kanade.tachiyomi.source.online.utils.MdUtil
-import eu.kanade.tachiyomi.util.asJsoup
-import eu.kanade.tachiyomi.util.site.setUrlWithoutDomain
-import okhttp3.CacheControl
-import okhttp3.Headers
-import okhttp3.HttpUrl.Companion.toHttpUrlOrNull
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import okhttp3.Response
-import org.jsoup.nodes.Element
-import rx.Observable
+import eu.kanade.tachiyomi.source.online.utils.toBasicManga
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import retrofit2.Response
+import uy.kohesive.injekt.Injekt
+import uy.kohesive.injekt.api.get
 import uy.kohesive.injekt.injectLazy
 
-class SearchHandler(val client: OkHttpClient, private val headers: Headers, val langs: List<String>) {
+class SearchHandler {
+    private val service: MangaDexService by lazy { Injekt.get<NetworkHelper>().service }
+    private val filterHandler: FilterHandler by injectLazy()
+    private val apiMangaParser: ApiMangaParser by injectLazy()
 
-    private val preferences: PreferencesHelper by injectLazy()
+    suspend fun search(page: Int, query: String, filters: FilterList): MangaListPage {
+        return withContext(Dispatchers.IO) {
+            if (query.startsWith(PREFIX_ID_SEARCH)) {
+                val realQuery = query.removePrefix(PREFIX_ID_SEARCH)
+                val response = service.viewManga(realQuery)
+                val details = apiMangaParser.mangaDetailsParse(response.body()!!)
+                MangaListPage(listOf(details), false)
+            } else {
+                val queryParamters = mutableMapOf<String, Any>()
 
-    fun fetchSearchManga(page: Int, query: String, filters: FilterList): Observable<MangasPage> {
-        return if (query.startsWith(PREFIX_ID_SEARCH)) {
-            val realQuery = query.removePrefix(PREFIX_ID_SEARCH)
-            client.newCall(searchMangaByIdRequest(realQuery))
-                .asObservableSuccess()
-                .map { response ->
-                    val details = ApiMangaParser(langs).mangaDetailsParse(response, emptyList())
-                    details.url = "/manga/$realQuery/"
-                    MangasPage(listOf(details), false)
-                }
-        } else if (query.startsWith(PREFIX_GROUP_SEARCH)) {
-            val realQuery = query.removePrefix(PREFIX_GROUP_SEARCH)
-            client.newCall(searchMangaByGroupRequest(realQuery))
-                .asObservableSuccess()
-                .map { response ->
-                    response.asJsoup().select(groupSelector).firstOrNull()?.attr("abs:href")
-                        ?.let {
-                            searchMangaParse(client.newCall(GET("$it/manga/0", headers)).execute())
-                        }
-                        ?: MangasPage(emptyList(), false)
-                }
-        } else {
-            client.newCall(searchMangaRequest(page, query, filters))
-                .asObservableSuccess()
-                .map { response ->
-                    searchMangaParse(response)
-                }
-        }
-    }
+                queryParamters["limit"] = MdUtil.mangaLimit.toString()
+                queryParamters["offset"] = (MdUtil.getMangaListOffset(page))
+                val actualQuery = query.replace(WHITESPACE_REGEX, " ")
 
-    private fun searchMangaParse(response: Response): MangasPage {
-        val document = response.asJsoup()
+                if (actualQuery.isNotBlank()) {
+                    queryParamters["title"] = actualQuery
+                }
+                val additionalQueries = filterHandler.getQueryMap(filters)
+                queryParamters.putAll(additionalQueries)
 
-        val mangas = document.select(searchMangaSelector).map { element ->
-            searchMangaFromElement(element)
-        }
+                val response = service.search(ProxyRetrofitQueryMap(queryParamters))
 
-        val hasNextPage = searchMangaNextPageSelector.let { selector ->
-            document.select(selector).first()
-        } != null
-
-        return MangasPage(mangas, hasNextPage)
-    }
-
-    private fun searchMangaRequest(page: Int, query: String, filters: FilterList): Request {
-
-        val tags = mutableListOf<String>()
-        val statuses = mutableListOf<String>()
-        val demographics = mutableListOf<String>()
-
-        // Do traditional search
-        val url = "${MdUtil.baseUrl}/?page=search".toHttpUrlOrNull()!!.newBuilder()
-            .addQueryParameter("p", page.toString())
-            .addQueryParameter("title", query.replace(WHITESPACE_REGEX, " "))
-
-        filters.forEach { filter ->
-            when (filter) {
-                is FilterHandler.TextField -> url.addQueryParameter(filter.key, filter.state)
-                is FilterHandler.DemographicList -> {
-                    filter.state.forEach { demographic ->
-                        if (demographic.state) {
-                            demographics.add(demographic.id)
-                        }
-                    }
-                }
-                is FilterHandler.PublicationStatusList -> {
-                    filter.state.forEach { status ->
-                        if (status.state) {
-                            statuses.add(status.id)
-                        }
-                    }
-                }
-                is FilterHandler.OriginalLanguage -> {
-                    if (filter.state != 0) {
-                        val number: String =
-                            FilterHandler.sourceLang().first { it -> it.first == filter.values[filter.state] }
-                                .second
-                        url.addQueryParameter("lang_id", number)
-                    }
-                }
-                is FilterHandler.TagInclusionMode -> {
-                    url.addQueryParameter("tag_mode_inc", arrayOf("all", "any")[filter.state])
-                }
-                is FilterHandler.TagExclusionMode -> {
-                    url.addQueryParameter("tag_mode_exc", arrayOf("all", "any")[filter.state])
-                }
-                is FilterHandler.ContentList -> {
-                    filter.state.forEach { content ->
-                        if (content.isExcluded()) {
-                            tags.add("-${content.id}")
-                        } else if (content.isIncluded()) {
-                            tags.add(content.id)
-                        }
-                    }
-                }
-                is FilterHandler.FormatList -> {
-                    filter.state.forEach { format ->
-                        if (format.isExcluded()) {
-                            tags.add("-${format.id}")
-                        } else if (format.isIncluded()) {
-                            tags.add(format.id)
-                        }
-                    }
-                }
-                is FilterHandler.GenreList -> {
-                    filter.state.forEach { genre ->
-                        if (genre.isExcluded()) {
-                            tags.add("-${genre.id}")
-                        } else if (genre.isIncluded()) {
-                            tags.add(genre.id)
-                        }
-                    }
-                }
-                is FilterHandler.ThemeList -> {
-                    filter.state.forEach { theme ->
-                        if (theme.isExcluded()) {
-                            tags.add("-${theme.id}")
-                        } else if (theme.isIncluded()) {
-                            tags.add(theme.id)
-                        }
-                    }
-                }
-                is FilterHandler.SortFilter -> {
-                    if (filter.state != null) {
-                        val sortables = FilterHandler.sortables()
-                        if (filter.state!!.ascending) {
-                            url.addQueryParameter(
-                                "s",
-                                sortables[filter.state!!.index].second.toString()
-                            )
-                        } else {
-                            url.addQueryParameter(
-                                "s",
-                                sortables[filter.state!!.index].third.toString()
-                            )
-                        }
-                    }
-                }
+                searchMangaParse(response)
             }
         }
-        // Manually append genres list to avoid commas being encoded
-        var urlToUse = url.toString()
-        if (demographics.isNotEmpty()) {
-            urlToUse += "&demos=" + demographics.joinToString(",")
-        }
-        if (statuses.isNotEmpty()) {
-            urlToUse += "&statuses=" + statuses.joinToString(",")
-        }
-        if (tags.isNotEmpty()) {
-            urlToUse += "&tags=" + tags.joinToString(",")
-        }
-
-        return GET(urlToUse, headers, CacheControl.FORCE_NETWORK)
     }
 
-    private fun searchMangaFromElement(element: Element): SManga {
-        val manga = SManga.create()
-        element.select("a.manga_title").first().let {
-            val url = MdUtil.modifyMangaUrl(it.attr("href"))
-            manga.setUrlWithoutDomain(url)
-            manga.title = it.text().trim()
+    private fun searchMangaParse(response: Response<MangaListDto>): MangaListPage {
+        if (response.isSuccessful.not()) {
+            throw Exception("Error getting search manga http code: ${response.code()}")
         }
 
-        manga.thumbnail_url = MdUtil.formThumbUrl(manga.url, preferences.lowQualityCovers())
+        val mangaListDto = response.body()!!
 
-        return manga
-    }
+        val hasMoreResults = mangaListDto.limit + mangaListDto.offset < mangaListDto.total
 
-    private fun searchMangaByIdRequest(id: String): Request {
-        return GET(MdUtil.apiUrl + MdUtil.apiManga + id + MdUtil.includeChapters, headers, CacheControl.FORCE_NETWORK)
-    }
+        val mangaList = mangaListDto.results.map {
+            it.toBasicManga()
+        }
 
-    private fun searchMangaByGroupRequest(group: String): Request {
-        return GET(MdUtil.groupSearchUrl + group, headers, CacheControl.FORCE_NETWORK)
+        return MangaListPage(mangaList, hasMoreResults)
     }
 
     companion object {
         const val PREFIX_ID_SEARCH = "id:"
-        const val PREFIX_GROUP_SEARCH = "group:"
         val WHITESPACE_REGEX = "\\s".toRegex()
-        const val searchMangaNextPageSelector =
-            ".pagination li:not(.disabled) span[title*=last page]:not(disabled)"
-        const val searchMangaSelector = "div.manga-entry"
-        const val groupSelector = ".table > tbody:nth-child(2) > tr:nth-child(1) > td:nth-child(2) > a"
     }
 }

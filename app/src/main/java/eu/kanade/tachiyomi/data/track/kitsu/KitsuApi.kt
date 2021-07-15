@@ -1,22 +1,36 @@
 package eu.kanade.tachiyomi.data.track.kitsu
 
 import com.elvishew.xlog.XLog
-import com.github.salomonbrys.kotson.*
+import com.github.salomonbrys.kotson.array
+import com.github.salomonbrys.kotson.get
+import com.github.salomonbrys.kotson.int
+import com.github.salomonbrys.kotson.jsonObject
+import com.github.salomonbrys.kotson.obj
+import com.github.salomonbrys.kotson.set
+import com.github.salomonbrys.kotson.string
 import com.google.gson.GsonBuilder
 import com.google.gson.JsonObject
 import com.google.gson.JsonParser
 import eu.kanade.tachiyomi.data.database.models.Manga
 import eu.kanade.tachiyomi.data.database.models.Track
 import eu.kanade.tachiyomi.data.track.model.TrackSearch
-import eu.kanade.tachiyomi.network.GET
 import eu.kanade.tachiyomi.network.POST
 import eu.kanade.tachiyomi.network.await
 import okhttp3.FormBody
 import okhttp3.OkHttpClient
 import retrofit2.Retrofit
 import retrofit2.converter.gson.GsonConverterFactory
-import retrofit2.http.*
-
+import retrofit2.http.Body
+import retrofit2.http.DELETE
+import retrofit2.http.Field
+import retrofit2.http.FormUrlEncoded
+import retrofit2.http.GET
+import retrofit2.http.Header
+import retrofit2.http.Headers
+import retrofit2.http.PATCH
+import retrofit2.http.POST
+import retrofit2.http.Path
+import retrofit2.http.Query
 
 class KitsuApi(private val client: OkHttpClient, interceptor: KitsuInterceptor) {
 
@@ -99,14 +113,21 @@ class KitsuApi(private val client: OkHttpClient, interceptor: KitsuInterceptor) 
         return false
     }
 
-    suspend fun search(query: String, manga: Manga, wasPreviouslyTracked: Boolean): List<TrackSearch> {
-        if(manga.kitsu_id !== null && !wasPreviouslyTracked) {
-            val response = client.newCall(GET(apiMangaUrl(manga.kitsu_id!!))).await()
+    suspend fun search(
+        query: String,
+        manga: Manga,
+        wasPreviouslyTracked: Boolean,
+    ): List<TrackSearch> {
+        if (manga.kitsu_id !== null && !wasPreviouslyTracked) {
+            val response =
+                client.newCall(eu.kanade.tachiyomi.network.GET(apiMangaUrl(manga.kitsu_id!!)))
+                    .await()
             val jsonData = response.body!!.string()
             var json = JsonParser.parseString(jsonData).asJsonObject
             json["data"][0]["attributes"]["id"] = json["data"][0]["id"]
 
-            return listOf<TrackSearch>(KitsuSearchManga(json["data"][0]["attributes"].obj, true).toTrack())
+            return listOf<TrackSearch>(KitsuSearchManga(json["data"][0]["attributes"].obj,
+                true).toTrack())
         } else {
             val key = searchRest.getKey()["media"].asJsonObject["key"].string
 
@@ -165,38 +186,38 @@ class KitsuApi(private val client: OkHttpClient, interceptor: KitsuInterceptor) 
         @Headers("Content-Type: application/vnd.api+json")
         @POST("library-entries")
         suspend fun addLibManga(
-            @Body data: JsonObject
+            @Body data: JsonObject,
         ): JsonObject
 
         @Headers("Content-Type: application/vnd.api+json")
         @DELETE("library-entries/{id}")
         suspend fun deleteLibManga(
-            @Path("id") remoteId: Int
+            @Path("id") remoteId: Int,
         ): JsonObject
 
         @Headers("Content-Type: application/vnd.api+json")
         @PATCH("library-entries/{id}")
         suspend fun updateLibManga(
             @Path("id") remoteId: Int,
-            @Body data: JsonObject
+            @Body data: JsonObject,
         ): JsonObject
 
         @GET("library-entries")
         suspend fun findLibManga(
             @Query("filter[manga_id]", encoded = true) remoteId: Int,
             @Query("filter[user_id]", encoded = true) userId: String,
-            @Query("include") includes: String = "manga"
+            @Query("include") includes: String = "manga",
         ): JsonObject
 
         @GET("library-entries")
         suspend fun getLibManga(
             @Query("filter[id]", encoded = true) remoteId: Int,
-            @Query("include") includes: String = "manga"
+            @Query("include") includes: String = "manga",
         ): JsonObject
 
         @GET("users")
         suspend fun getCurrentUser(
-            @Query("filter[self]", encoded = true) self: Boolean = true
+            @Query("filter[self]", encoded = true) self: Boolean = true,
         ): JsonObject
     }
 
@@ -210,7 +231,7 @@ class KitsuApi(private val client: OkHttpClient, interceptor: KitsuInterceptor) 
         suspend fun getSearchQuery(
             @Header("X-Algolia-Application-Id") appid: String,
             @Header("X-Algolia-API-Key") key: String,
-            @Body json: JsonObject
+            @Body json: JsonObject,
         ): JsonObject
     }
 
@@ -223,7 +244,7 @@ class KitsuApi(private val client: OkHttpClient, interceptor: KitsuInterceptor) 
             @Field("password") password: String,
             @Field("grant_type") grantType: String = "password",
             @Field("client_id") client_id: String = clientId,
-            @Field("client_secret") client_secret: String = clientSecret
+            @Field("client_secret") client_secret: String = clientSecret,
         ): OAuth
     }
 

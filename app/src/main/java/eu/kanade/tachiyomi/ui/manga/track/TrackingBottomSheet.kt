@@ -2,69 +2,76 @@ package eu.kanade.tachiyomi.ui.manga.track
 
 import android.content.Intent
 import android.os.Bundle
+import android.view.LayoutInflater
 import android.view.View
-import android.view.ViewGroup
+import androidx.constraintlayout.widget.ConstraintLayout
 import androidx.core.net.toUri
 import androidx.recyclerview.widget.LinearLayoutManager
+import androidx.recyclerview.widget.RecyclerView
 import com.elvishew.xlog.XLog
 import com.google.android.material.bottomsheet.BottomSheetBehavior
-import com.google.android.material.bottomsheet.BottomSheetDialog
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.track.TrackService
 import eu.kanade.tachiyomi.data.track.model.TrackSearch
+import eu.kanade.tachiyomi.databinding.TrackingBottomSheetBinding
 import eu.kanade.tachiyomi.ui.manga.MangaDetailsController
 import eu.kanade.tachiyomi.util.system.dpToPx
 import eu.kanade.tachiyomi.util.system.toast
 import eu.kanade.tachiyomi.util.view.RecyclerWindowInsetsListener
-import eu.kanade.tachiyomi.util.view.setEdgeToEdge
-import kotlinx.android.synthetic.main.tracking_bottom_sheet.*
+import eu.kanade.tachiyomi.util.view.checkHeightThen
+import eu.kanade.tachiyomi.util.view.expand
+import eu.kanade.tachiyomi.util.view.updateLayoutParams
+import eu.kanade.tachiyomi.widget.E2EBottomSheetDialog
 
 class TrackingBottomSheet(private val controller: MangaDetailsController) :
-    BottomSheetDialog
-    (controller.activity!!, R.style.BottomSheetDialogTheme),
+    E2EBottomSheetDialog<TrackingBottomSheetBinding>(controller.activity!!),
     TrackAdapter.OnClickListener,
     SetTrackStatusDialog.Listener,
     SetTrackChaptersDialog.Listener,
     SetTrackScoreDialog.Listener,
-    TrackRemoveDialog.Listener {
+    TrackRemoveDialog.Listener,
+    SetTrackReadingDatesDialog.Listener {
 
     val activity = controller.activity!!
-
-    private var sheetBehavior: BottomSheetBehavior<*>
 
     val presenter = controller.presenter
 
     private var adapter: TrackAdapter? = null
 
+    override fun createBinding(inflater: LayoutInflater) =
+        TrackingBottomSheetBinding.inflate(inflater)
+
+    override var recyclerView: RecyclerView? = binding.trackRecycler
+
     init {
-        // Use activity theme for this layout
-        val view = activity.layoutInflater.inflate(R.layout.tracking_bottom_sheet, null)
-        setContentView(view)
-
-        sheetBehavior = BottomSheetBehavior.from(view.parent as ViewGroup)
-        setEdgeToEdge(activity, view)
         val height = activity.window.decorView.rootWindowInsets.systemWindowInsetBottom
-        sheetBehavior.peekHeight = 380.dpToPx + height
+        sheetBehavior.peekHeight = 500.dpToPx + height
 
-        sheetBehavior.addBottomSheetCallback(object : BottomSheetBehavior.BottomSheetCallback() {
-            override fun onSlide(bottomSheet: View, progress: Float) {}
+        sheetBehavior.addBottomSheetCallback(
+            object : BottomSheetBehavior.BottomSheetCallback() {
+                override fun onSlide(bottomSheet: View, progress: Float) {}
 
-            override fun onStateChanged(p0: View, state: Int) {
-                if (state == BottomSheetBehavior.STATE_EXPANDED) {
-                    sheetBehavior.skipCollapsed = true
+                override fun onStateChanged(p0: View, state: Int) {
+                    if (state == BottomSheetBehavior.STATE_EXPANDED) {
+                        sheetBehavior.skipCollapsed = true
+                    }
                 }
             }
-        })
-    }
-
-    override fun show() {
-        super.show()
-        sheetBehavior.state = BottomSheetBehavior.STATE_EXPANDED
+        )
+        binding.displayBottomSheet.checkHeightThen {
+            val fullHeight = activity.window.decorView.height
+            val insets = activity.window.decorView.rootWindowInsets
+            binding.trackRecycler.updateLayoutParams<ConstraintLayout.LayoutParams> {
+                matchConstraintMaxHeight =
+                    fullHeight - (insets?.systemWindowInsetTop ?: 0) - 30.dpToPx
+            }
+        }
     }
 
     override fun onStart() {
         super.onStart()
         sheetBehavior.skipCollapsed = true
+        sheetBehavior.expand()
     }
 
     /**
@@ -73,9 +80,9 @@ class TrackingBottomSheet(private val controller: MangaDetailsController) :
     override fun onCreate(savedInstanceState: Bundle?) {
         super.onCreate(savedInstanceState)
         adapter = TrackAdapter(this)
-        track_recycler.layoutManager = LinearLayoutManager(context)
-        track_recycler.adapter = adapter
-        track_recycler.setOnApplyWindowInsetsListener(RecyclerWindowInsetsListener)
+        binding.trackRecycler.layoutManager = LinearLayoutManager(context)
+        binding.trackRecycler.adapter = adapter
+        binding.trackRecycler.setOnApplyWindowInsetsListener(RecyclerWindowInsetsListener)
 
         adapter?.items = presenter.trackList
     }
@@ -83,6 +90,7 @@ class TrackingBottomSheet(private val controller: MangaDetailsController) :
     fun onNextTrackings(trackings: List<TrackItem>) {
         onRefreshDone()
         adapter?.items = trackings
+        controller.refreshTracker()
     }
 
     fun onSearchResults(results: List<TrackSearch>) {
@@ -101,13 +109,17 @@ class TrackingBottomSheet(private val controller: MangaDetailsController) :
 
     fun onRefreshDone() {
         for (i in adapter!!.items.indices) {
-            (track_recycler.findViewHolderForAdapterPosition(i) as? TrackHolder)?.setProgress(false)
+            (binding.trackRecycler.findViewHolderForAdapterPosition(i) as? TrackHolder)?.setProgress(
+                false
+            )
         }
     }
 
     fun onRefreshError(error: Throwable) {
         for (i in adapter!!.items.indices) {
-            (track_recycler.findViewHolderForAdapterPosition(i) as? TrackHolder)?.setProgress(false)
+            (binding.trackRecycler.findViewHolderForAdapterPosition(i) as? TrackHolder)?.setProgress(
+                false
+            )
         }
         activity.toast(error.message)
     }
@@ -184,6 +196,37 @@ class TrackingBottomSheet(private val controller: MangaDetailsController) :
         SetTrackScoreDialog(this, item).showDialog(controller.router)
     }
 
+    override fun onStartDateClick(position: Int) {
+        val item = adapter?.getItem(position) ?: return
+        if (item.track == null) return
+
+        val suggestedDate = presenter.getSuggestedDate(SetTrackReadingDatesDialog.ReadingDate.Start)
+        SetTrackReadingDatesDialog(
+            controller,
+            this,
+            SetTrackReadingDatesDialog.ReadingDate.Start,
+            item,
+            suggestedDate
+        )
+            .showDialog(controller.router)
+    }
+
+    override fun onFinishDateClick(position: Int) {
+        val item = adapter?.getItem(position) ?: return
+        if (item.track == null) return
+
+        val suggestedDate =
+            presenter.getSuggestedDate(SetTrackReadingDatesDialog.ReadingDate.Finish)
+        SetTrackReadingDatesDialog(
+            controller,
+            this,
+            SetTrackReadingDatesDialog.ReadingDate.Finish,
+            item,
+            suggestedDate
+        )
+            .showDialog(controller.router)
+    }
+
     override fun setStatus(item: TrackItem, selection: Int) {
         presenter.setStatus(item, selection)
         refreshItem(item)
@@ -194,13 +237,15 @@ class TrackingBottomSheet(private val controller: MangaDetailsController) :
     }
 
     fun refreshItem(index: Int) {
-        (track_recycler.findViewHolderForAdapterPosition(index) as? TrackHolder)?.setProgress(true)
+        (binding.trackRecycler.findViewHolderForAdapterPosition(index) as? TrackHolder)?.setProgress(
+            true
+        )
     }
 
     fun refreshTrack(item: TrackService?) {
         val index = adapter?.indexOf(item) ?: -1
         if (index > -1) {
-            (track_recycler.findViewHolderForAdapterPosition(index) as? TrackHolder)
+            (binding.trackRecycler.findViewHolderForAdapterPosition(index) as? TrackHolder)
                 ?.setProgress(true)
         }
     }
@@ -218,6 +263,23 @@ class TrackingBottomSheet(private val controller: MangaDetailsController) :
     override fun removeTracker(item: TrackItem, fromServiceAlso: Boolean) {
         refreshTrack(item.service)
         presenter.removeTracker(item, fromServiceAlso)
+    }
+
+    override fun setReadingDate(
+        item: TrackItem,
+        type: SetTrackReadingDatesDialog.ReadingDate,
+        date: Long,
+    ) {
+        when (type) {
+            SetTrackReadingDatesDialog.ReadingDate.Start -> controller.presenter.setTrackerStartDate(
+                item,
+                date
+            )
+            SetTrackReadingDatesDialog.ReadingDate.Finish -> controller.presenter.setTrackerFinishDate(
+                item,
+                date
+            )
+        }
     }
 
     private companion object {

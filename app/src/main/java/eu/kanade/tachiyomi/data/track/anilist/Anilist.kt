@@ -2,24 +2,29 @@ package eu.kanade.tachiyomi.data.track.anilist
 
 import android.content.Context
 import android.graphics.Color
+import androidx.annotation.StringRes
+import com.elvishew.xlog.XLog
 import com.google.gson.Gson
 import eu.kanade.tachiyomi.R
+import eu.kanade.tachiyomi.data.database.models.Manga
 import eu.kanade.tachiyomi.data.database.models.Track
 import eu.kanade.tachiyomi.data.preference.getOrDefault
 import eu.kanade.tachiyomi.data.track.TrackService
-import com.elvishew.xlog.XLog
-import eu.kanade.tachiyomi.data.database.models.Manga
+import eu.kanade.tachiyomi.data.track.updateNewTrackInfo
 import uy.kohesive.injekt.injectLazy
 
 class Anilist(private val context: Context, id: Int) : TrackService(id) {
 
-    override val name = "AniList"
+    @StringRes
+    override fun nameRes() = R.string.anilist
 
     private val gson: Gson by injectLazy()
 
     private val interceptor by lazy { AnilistInterceptor(this, getPassword()) }
 
     private val api by lazy { AnilistApi(client, interceptor) }
+
+    override val supportsReadingDates: Boolean = true
 
     private val scorePreference = preferences.anilistScoreType()
 
@@ -40,6 +45,8 @@ class Anilist(private val context: Context, id: Int) : TrackService(id) {
     override fun getStatusList() = listOf(READING, PLANNING, COMPLETED, REPEATING, PAUSED, DROPPED)
 
     override fun isCompletedStatus(index: Int) = getStatusList()[index] == COMPLETED
+
+    override fun completedStatus() = COMPLETED
 
     override fun getStatus(status: Int): String = with(context) {
         when (status) {
@@ -121,8 +128,18 @@ class Anilist(private val context: Context, id: Int) : TrackService(id) {
         }
     }
 
-    override suspend fun update(track: Track): Track {
-        if (track.total_chapters != 0 && track.last_chapter_read == track.total_chapters) {
+    override suspend fun add(track: Track): Track {
+        track.score = DEFAULT_SCORE.toFloat()
+        track.status = DEFAULT_STATUS
+        updateNewTrackInfo(track, PLANNING)
+        return api.addLibManga(track)
+    }
+
+    override suspend fun update(track: Track, setToReadStatus: Boolean): Track {
+        if (setToReadStatus && track.status == PLANNING && track.last_chapter_read != 0) {
+            track.status = READING
+        }
+        if (track.status == READING && track.total_chapters != 0 && track.last_chapter_read == track.total_chapters) {
             track.status = COMPLETED
         }
         // If user was using API v1 fetch library_id
@@ -144,10 +161,7 @@ class Anilist(private val context: Context, id: Int) : TrackService(id) {
             track.library_id = remoteTrack.library_id
             update(track)
         } else {
-            // Set default fields if it's not found in the list
-            track.score = DEFAULT_SCORE.toFloat()
-            track.status = DEFAULT_STATUS
-            api.addLibManga(track)
+            add(track)
         }
     }
 
@@ -157,7 +171,7 @@ class Anilist(private val context: Context, id: Int) : TrackService(id) {
         return api.remove(track)
     }
 
-    override suspend fun search(query: String, manga: Manga, wasPreviouslyTracked : Boolean) = api.search(query, manga, wasPreviouslyTracked)
+    override suspend fun search(query: String, manga: Manga, wasPreviouslyTracked: Boolean) = api.search(query, manga, wasPreviouslyTracked)
 
     override suspend fun refresh(track: Track): Track {
         val remoteTrack = api.getLibManga(track, getUsername().toInt())
@@ -186,7 +200,7 @@ class Anilist(private val context: Context, id: Int) : TrackService(id) {
 
     override fun logout() {
         super.logout()
-        preferences.trackToken(this).set(null)
+        preferences.trackToken(this).delete()
         interceptor.setAuth(null)
     }
 

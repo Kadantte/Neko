@@ -1,6 +1,6 @@
 plugins {
-    id(Plugins.ktLint.name) version Plugins.ktLint.version
-    id(Plugins.gradleVersions.name) version Plugins.gradleVersions.version
+    id("org.jmailen.kotlinter") version "3.4.5"
+    id("org.jetbrains.kotlin.android") version "1.5.21" apply false
 }
 allprojects {
     repositories {
@@ -8,58 +8,35 @@ allprojects {
         mavenCentral()
         maven { setUrl("https://jitpack.io") }
         maven { setUrl("https://plugins.gradle.org/m2/") }
-        jcenter()
     }
 }
 
 subprojects {
-    apply(plugin = Plugins.ktLint.name)
-    ktlint {
-        debug.set(true)
-        verbose.set(true)
-        android.set(false)
-        outputToConsole.set(true)
-        ignoreFailures.set(false)
-        ignoreFailures.set(true)
-        enableExperimentalRules.set(false)
-        reporters {
-            reporter(org.jlleitschuh.gradle.ktlint.reporter.ReporterType.CHECKSTYLE)
-            reporter(org.jlleitschuh.gradle.ktlint.reporter.ReporterType.JSON)
-        }
-        filter {
-            exclude("**/generated/**")
-            include("**/kotlin/**")
-        }
+    apply(plugin = "org.jmailen.kotlinter")
+
+    kotlinter {
+        experimentalRules = true
+        disabledRules = arrayOf("experimental:argument-list-wrapping")
     }
 }
 
 buildscript {
     dependencies {
-        classpath(LegacyPluginClassPath.fireBaseCrashlytics)
-        classpath(LegacyPluginClassPath.androidGradlePlugin)
-        classpath(LegacyPluginClassPath.googleServices)
-        classpath(LegacyPluginClassPath.kotlinExtensions)
-        classpath(LegacyPluginClassPath.kotlinPlugin)
-        classpath(LegacyPluginClassPath.aboutLibraries)
-        classpath(LegacyPluginClassPath.kotlinSerializations)
+        classpath("com.google.firebase:firebase-crashlytics-gradle:2.7.1")
+        classpath("com.android.tools.build:gradle:4.2.2")
+        classpath("com.google.gms:google-services:4.3.8")
+        val kotlinVersion = "1.5.21"
+        classpath("org.jetbrains.kotlin:kotlin-android-extensions:$kotlinVersion")
+        classpath("org.jetbrains.kotlin:kotlin-gradle-plugin:$kotlinVersion")
+        classpath("com.mikepenz.aboutlibraries.plugin:aboutlibraries-plugin:8.8.6")
+        classpath("org.jetbrains.kotlin:kotlin-serialization:$kotlinVersion")
     }
     repositories {
         gradlePluginPortal()
         google()
-        jcenter()
     }
 }
 
-tasks.named("dependencyUpdates", com.github.benmanes.gradle.versions.updates.DependencyUpdatesTask::class.java).configure {
-    rejectVersionIf {
-        isNonStable(candidate.version)
-    }
-    // optional parameters
-    checkForGradleUpdate = true
-    outputFormatter = "json"
-    outputDir = "build/dependencyUpdates"
-    reportfileName = "report"
-}
 
 tasks.register("clean", Delete::class) {
     delete(rootProject.buildDir)

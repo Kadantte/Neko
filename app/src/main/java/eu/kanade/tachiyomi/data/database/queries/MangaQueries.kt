@@ -6,7 +6,14 @@ import com.pushtorefresh.storio.sqlite.queries.RawQuery
 import eu.kanade.tachiyomi.data.database.DbProvider
 import eu.kanade.tachiyomi.data.database.models.LibraryManga
 import eu.kanade.tachiyomi.data.database.models.Manga
-import eu.kanade.tachiyomi.data.database.resolvers.*
+import eu.kanade.tachiyomi.data.database.resolvers.LibraryMangaGetResolver
+import eu.kanade.tachiyomi.data.database.resolvers.MangaDateAddedPutResolver
+import eu.kanade.tachiyomi.data.database.resolvers.MangaFavoritePutResolver
+import eu.kanade.tachiyomi.data.database.resolvers.MangaFlagsPutResolver
+import eu.kanade.tachiyomi.data.database.resolvers.MangaLastUpdatedPutResolver
+import eu.kanade.tachiyomi.data.database.resolvers.MangaNextUpdatedPutResolver
+import eu.kanade.tachiyomi.data.database.resolvers.MangaScanlatorFilterFlagsPutResolver
+import eu.kanade.tachiyomi.data.database.resolvers.MangaTitlePutResolver
 import eu.kanade.tachiyomi.data.database.tables.CategoryTable
 import eu.kanade.tachiyomi.data.database.tables.ChapterTable
 import eu.kanade.tachiyomi.data.database.tables.MangaCategoryTable
@@ -14,7 +21,7 @@ import eu.kanade.tachiyomi.data.database.tables.MangaTable
 
 interface MangaQueries : DbProvider {
 
-    fun getMangas() = db.get()
+    fun getMangaList() = db.get()
         .listOfObjects(Manga::class.java)
         .withQuery(
             Query.builder()
@@ -23,18 +30,23 @@ interface MangaQueries : DbProvider {
         )
         .prepare()
 
-    fun getLibraryMangas() = db.get()
+    fun getLibraryMangaList() = db.get()
         .listOfObjects(LibraryManga::class.java)
         .withQuery(
             RawQuery.builder()
                 .query(libraryQuery)
-                .observesTables(MangaTable.TABLE, ChapterTable.TABLE, MangaCategoryTable.TABLE, CategoryTable.TABLE)
+                .observesTables(
+                    MangaTable.TABLE,
+                    ChapterTable.TABLE,
+                    MangaCategoryTable.TABLE,
+                    CategoryTable.TABLE
+                )
                 .build()
         )
         .withGetResolver(LibraryMangaGetResolver.INSTANCE)
         .prepare()
 
-    fun getFavoriteMangas() = db.get()
+    fun getFavoriteMangaList() = db.get()
         .listOfObjects(Manga::class.java)
         .withQuery(
             Query.builder()
@@ -81,11 +93,26 @@ interface MangaQueries : DbProvider {
 
     fun insertManga(manga: Manga) = db.put().`object`(manga).prepare()
 
-    fun insertMangas(mangas: List<Manga>) = db.put().objects(mangas).prepare()
+    fun insertMangaList(mangaList: List<Manga>) = db.put().objects(mangaList).prepare()
 
-    fun updateFlags(manga: Manga) = db.put()
+    fun updateChapterFlags(manga: Manga) = db.put()
         .`object`(manga)
-        .withPutResolver(MangaFlagsPutResolver())
+        .withPutResolver(MangaFlagsPutResolver(MangaTable.COL_CHAPTER_FLAGS, Manga::chapter_flags))
+        .prepare()
+
+    fun updateChapterFlags(manga: List<Manga>) = db.put()
+        .objects(manga)
+        .withPutResolver(MangaFlagsPutResolver(MangaTable.COL_CHAPTER_FLAGS, Manga::chapter_flags, true))
+        .prepare()
+
+    fun updateViewerFlags(manga: Manga) = db.put()
+        .`object`(manga)
+        .withPutResolver(MangaFlagsPutResolver(MangaTable.COL_VIEWER, Manga::viewer_flags))
+        .prepare()
+
+    fun updateViewerFlags(manga: List<Manga>) = db.put()
+        .objects(manga)
+        .withPutResolver(MangaFlagsPutResolver(MangaTable.COL_VIEWER, Manga::viewer_flags, true))
         .prepare()
 
     fun updateScanlatorFilterFlag(manga: Manga) = db.put()
@@ -94,9 +121,9 @@ interface MangaQueries : DbProvider {
         .prepare()
 
     fun updateNextUpdated(manga: Manga) = db.put()
-            .`object`(manga)
-            .withPutResolver(MangaNextUpdatedPutResolver())
-            .prepare()
+        .`object`(manga)
+        .withPutResolver(MangaNextUpdatedPutResolver())
+        .prepare()
 
     fun updateLastUpdated(manga: Manga) = db.put()
         .`object`(manga)
@@ -113,11 +140,6 @@ interface MangaQueries : DbProvider {
         .withPutResolver(MangaDateAddedPutResolver())
         .prepare()
 
-    fun updateMangaViewer(manga: Manga) = db.put()
-        .`object`(manga)
-        .withPutResolver(MangaViewerPutResolver())
-        .prepare()
-
     fun updateMangaTitle(manga: Manga) = db.put()
         .`object`(manga)
         .withPutResolver(MangaTitlePutResolver())
@@ -125,19 +147,14 @@ interface MangaQueries : DbProvider {
 
     fun updateMangaInfo(manga: Manga) = db.put()
         .`object`(manga)
-        .withPutResolver(MangaInfoPutResolver())
-        .prepare()
-
-    fun resetMangaInfo(manga: Manga) = db.put()
-        .`object`(manga)
-        .withPutResolver(MangaInfoPutResolver(true))
+        .withPutResolver(MangaTitlePutResolver())
         .prepare()
 
     fun deleteManga(manga: Manga) = db.delete().`object`(manga).prepare()
 
-    fun deleteManga(mangas: List<Manga>) = db.delete().objects(mangas).prepare()
+    fun deleteManga(mangaList: List<Manga>) = db.delete().objects(mangaList).prepare()
 
-    fun deleteMangasNotInLibrary() = db.delete()
+    fun deleteMangaListNotInLibrary() = db.delete()
         .byQuery(
             DeleteQuery.builder()
                 .table(MangaTable.TABLE)
@@ -147,7 +164,7 @@ interface MangaQueries : DbProvider {
         )
         .prepare()
 
-    fun deleteMangas() = db.delete()
+    fun deleteMangaList() = db.delete()
         .byQuery(
             DeleteQuery.builder()
                 .table(MangaTable.TABLE)
@@ -165,6 +182,19 @@ interface MangaQueries : DbProvider {
         )
         .prepare()
 
+    fun getLastFetchedManga() = db.get()
+        .listOfObjects(Manga::class.java)
+        .withQuery(
+            RawQuery.builder()
+                .query(getLastFetchedMangaQuery())
+                .observesTables(MangaTable.TABLE)
+                .build()
+        )
+        .prepare()
+
     fun getTotalChapterManga() = db.get().listOfObjects(Manga::class.java)
-        .withQuery(RawQuery.builder().query(getTotalChapterMangaQuery()).observesTables(MangaTable.TABLE).build()).prepare()
+        .withQuery(
+            RawQuery.builder().query(getTotalChapterMangaQuery())
+                .observesTables(MangaTable.TABLE).build()
+        ).prepare()
 }

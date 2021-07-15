@@ -1,5 +1,6 @@
 package eu.kanade.tachiyomi.ui.source.browse
 
+import android.os.Build
 import android.os.Bundle
 import android.view.LayoutInflater
 import android.view.Menu
@@ -8,76 +9,74 @@ import android.view.MenuItem
 import android.view.View
 import android.view.ViewGroup
 import androidx.appcompat.widget.SearchView
+import androidx.core.view.isVisible
 import androidx.recyclerview.widget.DividerItemDecoration
 import androidx.recyclerview.widget.LinearLayoutManager
 import androidx.recyclerview.widget.RecyclerView
 import com.elvishew.xlog.XLog
-import com.google.android.material.snackbar.BaseTransientBottomBar
 import com.google.android.material.snackbar.Snackbar
-import com.jakewharton.rxbinding.support.v7.widget.queryTextChangeEvents
 import com.mikepenz.iconics.typeface.library.community.material.CommunityMaterial
 import eu.davidea.flexibleadapter.FlexibleAdapter
 import eu.davidea.flexibleadapter.items.IFlexible
 import eu.kanade.tachiyomi.R
-import eu.kanade.tachiyomi.data.database.models.Category
 import eu.kanade.tachiyomi.data.database.models.Manga
 import eu.kanade.tachiyomi.data.preference.PreferencesHelper
-import eu.kanade.tachiyomi.data.preference.getOrDefault
+import eu.kanade.tachiyomi.databinding.BrowseSourceControllerBinding
 import eu.kanade.tachiyomi.source.model.Filter
 import eu.kanade.tachiyomi.source.model.FilterList
 import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.tachiyomi.source.online.handlers.SearchHandler
 import eu.kanade.tachiyomi.ui.base.controller.NucleusController
 import eu.kanade.tachiyomi.ui.follows.FollowsController
-import eu.kanade.tachiyomi.ui.library.AddToLibraryCategoriesDialog
+import eu.kanade.tachiyomi.ui.main.FloatingSearchInterface
 import eu.kanade.tachiyomi.ui.main.MainActivity
 import eu.kanade.tachiyomi.ui.main.RootSearchInterface
 import eu.kanade.tachiyomi.ui.manga.MangaDetailsController
+import eu.kanade.tachiyomi.ui.source.LatestSourceController
 import eu.kanade.tachiyomi.ui.webview.WebViewActivity
+import eu.kanade.tachiyomi.util.addOrRemoveToFavorites
 import eu.kanade.tachiyomi.util.system.connectivityManager
 import eu.kanade.tachiyomi.util.system.dpToPx
-import eu.kanade.tachiyomi.util.view.applyWindowInsetsForRootController
-import eu.kanade.tachiyomi.util.view.gone
+import eu.kanade.tachiyomi.util.system.pxToDp
+import eu.kanade.tachiyomi.util.system.toast
+import eu.kanade.tachiyomi.util.view.activityBinding
+import eu.kanade.tachiyomi.util.view.applyBottomAnimatedInsets
 import eu.kanade.tachiyomi.util.view.inflate
+import eu.kanade.tachiyomi.util.view.requestFilePermissionsSafe
 import eu.kanade.tachiyomi.util.view.scrollViewWith
+import eu.kanade.tachiyomi.util.view.setOnQueryTextChangeListener
 import eu.kanade.tachiyomi.util.view.snack
 import eu.kanade.tachiyomi.util.view.updateLayoutParams
-import eu.kanade.tachiyomi.util.view.visible
-import eu.kanade.tachiyomi.util.view.visibleIf
 import eu.kanade.tachiyomi.util.view.withFadeTransaction
 import eu.kanade.tachiyomi.widget.AutofitRecyclerView
 import eu.kanade.tachiyomi.widget.EmptyView
-import kotlinx.android.synthetic.main.browse_source_controller.*
-import kotlinx.android.synthetic.main.main_activity.*
-import rx.Observable
-import rx.Subscription
-import rx.android.schedulers.AndroidSchedulers
+import kotlinx.coroutines.flow.collect
+import kotlinx.coroutines.launch
 import uy.kohesive.injekt.injectLazy
-import java.util.concurrent.TimeUnit
 
 /**
  * Controller to manage the catalogues available in the app.
  */
 open class BrowseSourceController(bundle: Bundle) :
-    NucleusController<BrowseSourcePresenter>(bundle),
+    NucleusController<BrowseSourceControllerBinding, BrowseSourcePresenter>(bundle),
     FlexibleAdapter.OnItemClickListener,
     FlexibleAdapter.OnItemLongClickListener,
-    FlexibleAdapter.EndlessScrollListener,
-    AddToLibraryCategoriesDialog.Listener,
-    RootSearchInterface {
+    RootSearchInterface,
+    FloatingSearchInterface,
+    FlexibleAdapter.EndlessScrollListener {
 
     constructor(
         searchQuery: String? = null,
         applyInset: Boolean = true,
-        deepLink: Boolean = false
+        deepLink: Boolean = false,
     ) : this(
         Bundle().apply
         {
             putBoolean(APPLY_INSET, applyInset)
             putBoolean(DEEP_LINK, deepLink)
 
-            if (searchQuery != null)
+            if (searchQuery != null) {
                 putString(SEARCH_QUERY_KEY, searchQuery)
+            }
         }
     )
 
@@ -108,11 +107,6 @@ open class BrowseSourceController(bundle: Bundle) :
     private var recycler: RecyclerView? = null
 
     /**
-     * Subscription for the search view.
-     */
-    private var searchViewSubscription: Subscription? = null
-
-    /**
      * Endless loading item.
      */
     private var progressItem: ProgressItem? = null
@@ -122,39 +116,37 @@ open class BrowseSourceController(bundle: Bundle) :
     }
 
     override fun getTitle(): String? {
-        return presenter.source.name
+        return searchTitle(presenter.source.name)
     }
 
     override fun createPresenter(): BrowseSourcePresenter {
-        return BrowseSourcePresenter(args.getString(SEARCH_QUERY_KEY) ?: "", args.getBoolean(DEEP_LINK))
+        return BrowseSourcePresenter(
+            args.getString(SEARCH_QUERY_KEY) ?: "",
+            args.getBoolean(DEEP_LINK)
+        )
     }
 
-    override fun inflateView(inflater: LayoutInflater, container: ViewGroup): View {
-        return inflater.inflate(R.layout.browse_source_controller, container, false)
-    }
+    override fun createBinding(inflater: LayoutInflater) =
+        BrowseSourceControllerBinding.inflate(inflater)
 
     override fun onViewCreated(view: View) {
         super.onViewCreated(view)
-
-        if (presenter.source.isLogged().not()) {
-            view.snack("You must be logged it.  please login")
-        }
-        if (bundle?.getBoolean(APPLY_INSET) == true) {
-            view.applyWindowInsetsForRootController(activity!!.bottom_nav)
-        }
 
         // Initialize adapter, scroll listener and recycler views
         adapter = FlexibleAdapter(null, this)
         setupRecycler(view)
 
-        fab.visibleIf(presenter.sourceFilters.isNotEmpty())
-        fab.setOnClickListener { showFilters() }
-        progress?.visible()
+        binding.fab.isVisible = presenter.sourceFilters.isNotEmpty()
+
+        binding.fab.setOnClickListener { showFilters() }
+        binding.swipeRefresh.isEnabled = false
+
+        updateFab()
+        binding.progress.isVisible = true
+        requestFilePermissionsSafe(301, preferences)
     }
 
     override fun onDestroyView(view: View) {
-        searchViewSubscription?.unsubscribe()
-        searchViewSubscription = null
         adapter = null
         snack = null
         recycler = null
@@ -163,39 +155,38 @@ open class BrowseSourceController(bundle: Bundle) :
 
     private fun setupRecycler(view: View) {
         var oldPosition = RecyclerView.NO_POSITION
-        val oldRecycler = catalogue_view?.getChildAt(1)
+        val oldRecycler = binding.catalogueView.getChildAt(1)
         if (oldRecycler is RecyclerView) {
-            oldPosition = (oldRecycler.layoutManager as androidx.recyclerview.widget.LinearLayoutManager).findFirstVisibleItemPosition()
+            oldPosition =
+                (oldRecycler.layoutManager as LinearLayoutManager).findFirstVisibleItemPosition()
             oldRecycler.adapter = null
 
-            catalogue_view?.removeView(oldRecycler)
+            binding.catalogueView.removeView(oldRecycler)
         }
 
         val recycler = if (presenter.isListMode) {
             RecyclerView(view.context).apply {
                 id = R.id.recycler
                 layoutManager = LinearLayoutManager(context)
-                layoutParams = RecyclerView.LayoutParams(ViewGroup.LayoutParams.MATCH_PARENT, ViewGroup.LayoutParams.MATCH_PARENT)
+                layoutParams = RecyclerView.LayoutParams(
+                    ViewGroup.LayoutParams.MATCH_PARENT,
+                    ViewGroup.LayoutParams.MATCH_PARENT
+                )
                 addItemDecoration(DividerItemDecoration(context, DividerItemDecoration.VERTICAL))
             }
         } else {
-            (catalogue_view.inflate(R.layout.manga_recycler_autofit) as AutofitRecyclerView).apply {
-                columnWidth = when (preferences.gridSize().getOrDefault()) {
-                    1 -> 1f
-                    2 -> 1.25f
-                    3 -> 1.66f
-                    4 -> 3f
-                    else -> .75f
-                }
+            (binding.catalogueView.inflate(R.layout.manga_recycler_autofit) as AutofitRecyclerView).apply {
+                setGridSize(preferences)
 
-                (layoutManager as androidx.recyclerview.widget.GridLayoutManager).spanSizeLookup = object : androidx.recyclerview.widget.GridLayoutManager.SpanSizeLookup() {
-                    override fun getSpanSize(position: Int): Int {
-                        return when (adapter?.getItemViewType(position)) {
-                            R.layout.manga_grid_item, null -> 1
-                            else -> spanCount
+                (layoutManager as androidx.recyclerview.widget.GridLayoutManager).spanSizeLookup =
+                    object : androidx.recyclerview.widget.GridLayoutManager.SpanSizeLookup() {
+                        override fun getSpanSize(position: Int): Int {
+                            return when (adapter?.getItemViewType(position)) {
+                                R.layout.manga_grid_item, null -> 1
+                                else -> spanCount
+                            }
                         }
                     }
-                }
             }
         }
         recycler.clipToPadding = false
@@ -203,24 +194,32 @@ open class BrowseSourceController(bundle: Bundle) :
         recycler.adapter = adapter
 
         scrollViewWith(
-            recycler, true,
+            recycler,
+            true,
             afterInsets = { insets ->
-                fab?.updateLayoutParams<ViewGroup.MarginLayoutParams> {
-                    bottomMargin = insets.systemWindowInsetBottom + 16.dpToPx
+                if (Build.VERSION.SDK_INT < Build.VERSION_CODES.R) {
+                    binding.fab.updateLayoutParams<ViewGroup.MarginLayoutParams> {
+                        bottomMargin = insets.systemWindowInsetBottom + 16.dpToPx
+                    }
                 }
             }
         )
 
-        recycler.addOnScrollListener(object : RecyclerView.OnScrollListener() {
-            override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
-                if (dy <= 0)
-                    fab.extend()
-                else
-                    fab.shrink()
-            }
-        })
+        binding.fab.applyBottomAnimatedInsets(16.dpToPx)
 
-        catalogue_view.addView(recycler, 1)
+        recycler.addOnScrollListener(
+            object : RecyclerView.OnScrollListener() {
+                override fun onScrolled(recyclerView: RecyclerView, dx: Int, dy: Int) {
+                    if (dy <= 0) {
+                        binding.fab.extend()
+                    } else {
+                        binding.fab.shrink()
+                    }
+                }
+            }
+        )
+
+        binding.catalogueView.addView(recycler, 1)
         if (oldPosition != RecyclerView.NO_POSITION) {
             recycler.layoutManager?.scrollToPosition(oldPosition)
         }
@@ -228,43 +227,67 @@ open class BrowseSourceController(bundle: Bundle) :
     }
 
     override fun onCreateOptionsMenu(menu: Menu, inflater: MenuInflater) {
-        if (bundle?.getBoolean(APPLY_INSET) != true) {
-            (activity as? MainActivity)?.showNavigationArrow()
-        }
         inflater.inflate(R.menu.browse_source, menu)
+
+        // Initialize search menu
+        val searchItem = menu.findItem(R.id.action_search)
+        val searchView = searchItem.actionView as SearchView
+
+        val query = presenter.query
+        if (query.isNotBlank()) {
+            searchItem.expandActionView()
+            searchView.setQuery(query, true)
+            searchView.clearFocus()
+        }
+
+        setOnQueryTextChangeListener(searchView, onlyOnSubmit = true, hideKbOnSubmit = false) {
+            searchWithQuery(it ?: "")
+            true
+        }
+
+        searchItem.fixExpand(
+            onExpand = { invalidateMenuOnExpand() },
+            onCollapse = {
+                searchWithQuery("")
+                true
+            }
+        )
 
         // Show next display mode
         menu.findItem(R.id.action_display_mode).apply {
-            val icon = if (presenter.isListMode)
+            val icon = if (presenter.isListMode) {
                 R.drawable.ic_view_module_24dp
-            else
+            } else {
                 R.drawable.ic_view_list_24dp
+            }
             setIcon(icon)
         }
-
-        // Show toggle library visibility
         menu.findItem(R.id.action_toggle_have_already).apply {
-            title = if (presenter.isLibraryVisible) {
-                activity!!.getString(R.string.hide_library_manga)
+            val icon = if (preferences.browseShowLibrary().get()) {
+                R.drawable.ic_eye_off_24dp
             } else {
-                activity!!.getString(R.string.show_library_manga)
+                R.drawable.ic_eye_24dp
             }
+            setIcon(icon)
         }
+        hideItemsIfExpanded(searchItem, menu)
     }
 
     override fun onOptionsItemSelected(item: MenuItem): Boolean {
         when (item.itemId) {
-            R.id.action_search -> item.expandActionView()
+            R.id.action_search -> expandActionViewFromInteraction = true
             R.id.action_display_mode -> swapDisplayMode()
             R.id.action_toggle_have_already -> swapLibraryVisibility()
-            R.id.action_open_in_web_view -> openInWebView()
+            /*   R.id.action_open_in_web_view -> openInWebView()
+               R.id.action_open_merged_source_in_web_view -> openInWebView(false)*/
+
             else -> return super.onOptionsItemSelected(item)
         }
         return true
     }
 
     private fun showFilters() {
-        val sheet = SourceSearchSheet(activity!!)
+        val sheet = SourceFilterSheet(activity!!)
         sheet.setFilters(presenter.filterItems)
         presenter.filtersChanged = false
         val oldFilters = mutableListOf<Any?>()
@@ -318,28 +341,60 @@ open class BrowseSourceController(bundle: Bundle) :
         }
 
         sheet.onRandomClicked = {
-            sheet.dismiss()
-            showProgressBar()
-            adapter?.clear()
-            presenter.searchRandomManga()
+            viewScope.launch {
+                sheet.dismiss()
+                showProgressBar()
+                adapter?.clear()
+                presenter.searchRandomManga().collect { manga ->
+                    if (manga == null) {
+                        onAddPageError(Exception("Error opening random manga"))
+                    } else {
+                        openManga(manga)
+                    }
+                }
+            }
         }
 
         sheet.onFollowsClicked = {
             sheet.dismiss()
-            adapter?.clear()
-            router.pushController(FollowsController().withFadeTransaction())
+            if (presenter.source.isLogged().not()) {
+                view?.context?.toast("Please login to view follows")
+            } else {
+                adapter?.clear()
+                router.pushController(FollowsController().withFadeTransaction())
+            }
         }
+
+        sheet.onLatestChapterClicked = {
+            sheet.dismiss()
+            adapter?.clear()
+            router.pushController(LatestSourceController().withFadeTransaction())
+        }
+
         sheet.show()
     }
 
-    private fun openInWebView() {
-        val source = presenter.source as? HttpSource ?: return
-        val activity = activity ?: return
-        val intent = WebViewActivity.newIntent(
-            activity, source.id, source.baseUrl,
-            presenter
-                .source.name
-        )
+    private fun openInWebView(dex: Boolean = true) {
+        val intent = if (dex) {
+            val source = presenter.source as? HttpSource ?: return
+            val activity = activity ?: return
+            WebViewActivity.newIntent(
+                activity,
+                source.id,
+                source.baseUrl,
+                presenter.source.name
+            )
+        } else {
+            val source = presenter.sourceManager.getMergeSource() as? HttpSource ?: return
+            val activity = activity ?: return
+            WebViewActivity.newIntent(
+                activity,
+                source.id,
+                source.baseUrl,
+                source.name
+            )
+        }
+
         startActivity(intent)
     }
 
@@ -350,13 +405,14 @@ open class BrowseSourceController(bundle: Bundle) :
      */
     private fun searchWithQuery(newQuery: String) {
         // If text didn't change, do nothing
-        if (presenter.query == newQuery)
+        if (presenter.query == newQuery) {
             return
+        }
 
         showProgressBar()
         adapter?.clear()
 
-        presenter.restartPager(newQuery)
+        presenter.restartPager(newQuery, presenter.sourceFilters)
     }
 
     fun goDirectlyForDeepLink(manga: Manga) {
@@ -367,16 +423,16 @@ open class BrowseSourceController(bundle: Bundle) :
      * Called from the presenter when the network request is received.
      *
      * @param page the current page.
-     * @param mangas the list of manga of the page.
+     * @param mangaList the list of manga of the page.
      */
-    fun onAddPage(page: Int, mangas: List<BrowseSourceItem>) {
+    fun onAddPage(page: Int, mangaList: List<BrowseSourceItem>) {
         val adapter = adapter ?: return
         hideProgressBar()
         if (page == 1) {
             adapter.clear()
             resetProgressItem()
         }
-        adapter.onLoadMoreComplete(mangas)
+        adapter.onLoadMoreComplete(mangaList)
     }
 
     /**
@@ -394,7 +450,7 @@ open class BrowseSourceController(bundle: Bundle) :
 
         val message = getErrorMessage(error)
         val retryAction = View.OnClickListener {
-            // If not the first page, show bottom progress bar.
+            // If not the first page, show bottom binding.progress bar.
             if (adapter.mainItemCount > 0 && progressItem != null) {
                 adapter.addScrollableFooterWithDelay(progressItem!!, 0, true)
             } else {
@@ -407,15 +463,18 @@ open class BrowseSourceController(bundle: Bundle) :
             val actions = emptyList<EmptyView.Action>().toMutableList()
 
             actions += EmptyView.Action(R.string.retry, retryAction)
-            actions += EmptyView.Action(R.string.open_in_webview, View.OnClickListener { openInWebView() })
+            actions += EmptyView.Action(
+                R.string.open_in_webview,
+                View.OnClickListener { openInWebView() }
+            )
 
-            empty_view.show(
+            binding.emptyView.show(
                 CommunityMaterial.Icon.cmd_compass_off,
                 message,
                 actions
             )
         } else {
-            snack = source_layout?.snack(message, Snackbar.LENGTH_INDEFINITE) {
+            snack = binding.sourceLayout.snack(message, Snackbar.LENGTH_INDEFINITE) {
                 setAction(R.string.retry, retryAction)
             }
         }
@@ -434,7 +493,7 @@ open class BrowseSourceController(bundle: Bundle) :
     }
 
     /**
-     * Sets a new progress item and reenables the scroll listener.
+     * Sets a new binding.progress item and reenables the scroll listener.
      */
     private fun resetProgressItem() {
         progressItem = ProgressItem()
@@ -478,11 +537,11 @@ open class BrowseSourceController(bundle: Bundle) :
         activity?.invalidateOptionsMenu()
         setupRecycler(view)
         if (!isListMode || !view.context.connectivityManager.isActiveNetworkMetered) {
-            // Initialize mangas if going to grid view or if over wifi when going to list view
-            val mangas = (0 until adapter.itemCount).mapNotNull {
+            // Initialize mangaList if going to grid view or if over wifi when going to list view
+            val mangaList = (0 until adapter.itemCount).mapNotNull {
                 (adapter.getItem(it) as? BrowseSourceItem)?.manga
             }
-            presenter.initializeMangas(mangas)
+            presenter.initializeMangaList(mangaList)
         }
     }
 
@@ -504,7 +563,7 @@ open class BrowseSourceController(bundle: Bundle) :
         val adapter = adapter ?: return null
 
         adapter.allBoundViewHolders.forEach { holder ->
-            val item = adapter.getItem(holder.adapterPosition) as? BrowseSourceItem
+            val item = adapter.getItem(holder.flexibleAdapterPosition) as? BrowseSourceItem
             if (item != null && item.manga.id!! == manga.id!!) {
                 return holder as BrowseSourceHolder
             }
@@ -514,21 +573,21 @@ open class BrowseSourceController(bundle: Bundle) :
     }
 
     /**
-     * Shows the progress bar.
+     * Shows the binding.progress bar.
      */
     private fun showProgressBar() {
-        empty_view.gone()
-        progress?.visible()
+        binding.emptyView.isVisible = false
+        binding.progress.isVisible = true
         snack?.dismiss()
         snack = null
     }
 
     /**
-     * Hides active progress bars.
+     * Hides active binding.progress bars.
      */
     private fun hideProgressBar() {
-        empty_view.gone()
-        progress?.gone()
+        binding.emptyView.isVisible = false
+        binding.progress.isVisible = false
     }
 
     /**
@@ -539,9 +598,15 @@ open class BrowseSourceController(bundle: Bundle) :
      */
     override fun onItemClick(view: View?, position: Int): Boolean {
         val item = adapter?.getItem(position) as? BrowseSourceItem ?: return false
-        router.pushController(MangaDetailsController(item.manga, true).withFadeTransaction())
-
+        openManga(item.manga)
         return false
+    }
+
+    /**
+     * opens a manga
+     */
+    private fun openManga(manga: Manga) {
+        router.pushController(MangaDetailsController(manga, true).withFadeTransaction())
     }
 
     /**
@@ -555,110 +620,39 @@ open class BrowseSourceController(bundle: Bundle) :
      */
     override fun onItemLongClick(position: Int) {
         val manga = (adapter?.getItem(position) as? BrowseSourceItem?)?.manga ?: return
+        val view = view ?: return
+        val activity = activity ?: return
         snack?.dismiss()
-        if (manga.favorite) {
-            presenter.changeMangaFavorite(manga)
-            adapter?.notifyItemChanged(position)
-            snack = source_layout?.snack(R.string.removed_from_library, Snackbar.LENGTH_INDEFINITE) {
-                setAction(R.string.undo) {
-                    if (!manga.favorite) addManga(manga, position)
-                }
-                addCallback(object : BaseTransientBottomBar.BaseCallback<Snackbar>() {
-                    override fun onDismissed(transientBottomBar: Snackbar?, event: Int) {
-                        super.onDismissed(transientBottomBar, event)
-                        if (!manga.favorite) presenter.confirmDeletion(manga)
-                    }
-                })
-            }
+        snack = manga.addOrRemoveToFavorites(
+            presenter.db,
+            preferences,
+            view,
+            activity,
+            onMangaAdded = {
+                adapter?.notifyItemChanged(position)
+                snack = view.snack(R.string.added_to_library)
+            },
+            onMangaMoved = { adapter?.notifyItemChanged(position) },
+            onMangaDeleted = { presenter.confirmDeletion(manga) }
+        )
+        if (snack?.duration == Snackbar.LENGTH_INDEFINITE) {
             (activity as? MainActivity)?.setUndoSnackBar(snack)
-        } else {
-            addManga(manga, position)
-            snack = source_layout?.snack(R.string.added_to_library)
         }
     }
 
-    private fun addManga(manga: Manga, position: Int) {
-        presenter.changeMangaFavorite(manga)
-        adapter?.notifyItemChanged(position)
-
-        val categories = presenter.getCategories()
-        val defaultCategoryId = preferences.defaultCategory()
-        val defaultCategory = categories.find { it.id == defaultCategoryId }
-        when {
-            defaultCategory != null -> presenter.moveMangaToCategory(manga, defaultCategory)
-            defaultCategoryId == 0 || categories.isEmpty() -> // 'Default' or no category
-                presenter.moveMangaToCategory(manga, null)
-            else -> {
-                val ids = presenter.getMangaCategoryIds(manga)
-                if (ids.isNullOrEmpty()) {
-                    presenter.moveMangaToCategory(manga, null)
-                }
-                val preselected = ids.mapNotNull { id ->
-                    categories.indexOfFirst { it.id == id }.takeIf { it != -1 }
-                }.toTypedArray()
-
-                AddToLibraryCategoriesDialog(this, manga, categories, preselected, position)
-                    .showDialog(router)
-            }
-        }
+    fun updateFab() {
+        binding.fab.y =
+            -((activityBinding!!.bottomNav?.height?.pxToDp?.toFloat() ?: 0f) + 25f.dpToPx)
     }
 
-    /**
-     * Update manga to use selected categories.
-     *
-     * @param mangas The list of manga to move to categories.
-     * @param categories The list of categories where manga will be placed.
-     */
-    override fun updateCategoriesForManga(manga: Manga?, categories: List<Category>) {
-        manga?.let { presenter.updateMangaCategories(manga, categories) }
-    }
-
-    /**
-     * Update manga to remove from favorites
-     */
-    override fun addToLibraryCancelled(manga: Manga?, position: Int) {
-        manga?.let {
-            presenter.changeMangaFavorite(manga)
-            adapter?.notifyItemChanged(position)
-        }
-    }
-
-    override fun expandSearch() {
-        // Initialize search menu
-        val searchItem = activity?.toolbar?.menu?.findItem(R.id.action_search)!!
-        val searchView = searchItem.actionView as SearchView
-
-        val query = presenter.query
-        if (!query.isBlank()) {
-            searchItem.expandActionView()
-            searchView.setQuery(query, true)
-            searchView.clearFocus()
-        } else {
-            searchItem.expandActionView()
-        }
-
-        val searchEventsObservable = searchView.queryTextChangeEvents()
-            .skip(1)
-            .filter { router.backstack.lastOrNull()?.controller() == this@BrowseSourceController }
-            .share()
-        val writingObservable = searchEventsObservable
-            .filter { !it.isSubmitted }
-            .debounce(1250, TimeUnit.MILLISECONDS, AndroidSchedulers.mainThread())
-        val submitObservable = searchEventsObservable
-            .filter { it.isSubmitted }
-
-        searchViewSubscription?.unsubscribe()
-        searchViewSubscription = Observable.merge(writingObservable, submitObservable)
-            .map { it.queryText().toString() }.filter { it != SearchHandler.PREFIX_GROUP_SEARCH && it != SearchHandler.PREFIX_ID_SEARCH }
-            .subscribeUntilDestroy { searchWithQuery(it) }
-    }
-
-    protected companion object {
+    companion object {
         const val SOURCE_ID_KEY = "sourceId"
-        const val MANGA_ID = "mangaId"
-        const val SEARCH_QUERY_KEY = "searchQuery"
         const val APPLY_INSET = "applyInset"
         const val DEEP_LINK = "deepLink"
         const val FOLLOWS = "follows"
+        const val MANGA_ID = "mangaId"
+
+        const val SEARCH_QUERY_KEY = "searchQuery"
+        const val SMART_SEARCH_CONFIG_KEY = "smartSearchConfig"
     }
 }

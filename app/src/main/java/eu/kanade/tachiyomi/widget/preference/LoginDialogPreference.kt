@@ -3,15 +3,17 @@ package eu.kanade.tachiyomi.widget.preference
 import android.app.Dialog
 import android.os.Bundle
 import android.view.View
+import androidx.annotation.StringRes
+import androidx.core.view.isVisible
 import com.afollestad.materialdialogs.MaterialDialog
 import com.afollestad.materialdialogs.customview.customView
+import com.afollestad.materialdialogs.customview.getCustomView
 import com.bluelinelabs.conductor.ControllerChangeHandler
 import com.bluelinelabs.conductor.ControllerChangeType
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.preference.PreferencesHelper
+import eu.kanade.tachiyomi.databinding.PrefAccountLoginBinding
 import eu.kanade.tachiyomi.ui.base.controller.DialogController
-import kotlinx.android.synthetic.main.pref_account_login.view.login
-import kotlinx.android.synthetic.main.pref_site_login.view.*
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -20,7 +22,7 @@ import rx.Subscription
 import uy.kohesive.injekt.injectLazy
 
 abstract class LoginDialogPreference(
-    private val usernameLabel: String? = null,
+    @StringRes private val usernameLabelRes: Int? = null,
     bundle: Bundle? = null
 ) :
     DialogController(bundle) {
@@ -28,6 +30,7 @@ abstract class LoginDialogPreference(
     var v: View? = null
         private set
 
+    protected lateinit var binding: PrefAccountLoginBinding
     val preferences: PreferencesHelper by injectLazy()
 
     val scope = CoroutineScope(Job() + Dispatchers.Main)
@@ -40,6 +43,7 @@ abstract class LoginDialogPreference(
         val dialog = MaterialDialog(activity!!).apply {
             customView(R.layout.pref_account_login, scrollable = false)
         }
+        binding = PrefAccountLoginBinding.bind(dialog.getCustomView())
 
         onViewCreated(dialog.view)
 
@@ -48,21 +52,16 @@ abstract class LoginDialogPreference(
 
     fun onViewCreated(view: View) {
         v = view.apply {
-
-            if (!usernameLabel.isNullOrEmpty()) {
-                username_input.hint = usernameLabel
+            if (usernameLabelRes != null) {
+                binding.usernameInput.hint = view.context.getString(usernameLabelRes)
             }
 
-            login.setOnClickListener {
+            binding.login.setOnClickListener {
                 checkLogin()
             }
 
-            two_factor_check?.setOnCheckedChangeListener { _, isChecked ->
-                if (isChecked) {
-                    two_factor_holder.visibility = View.VISIBLE
-                } else {
-                    two_factor_holder.visibility = View.GONE
-                }
+            binding.twoFactorCheck.setOnCheckedChangeListener { _, isChecked ->
+                binding.twoFactorCheck.isVisible = isChecked
             }
 
             setCredentialsOnView(this)

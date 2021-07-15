@@ -7,9 +7,13 @@ import android.os.Looper
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.widget.Toast
+import com.elvishew.xlog.XLog
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.util.system.WebViewClientCompat
+import eu.kanade.tachiyomi.util.system.WebViewUtil
 import eu.kanade.tachiyomi.util.system.isOutdated
+import eu.kanade.tachiyomi.util.system.launchUI
+import eu.kanade.tachiyomi.util.system.setDefaultSettings
 import eu.kanade.tachiyomi.util.system.toast
 import okhttp3.Cookie
 import okhttp3.HttpUrl.Companion.toHttpUrl
@@ -38,9 +42,17 @@ class CloudflareInterceptor(private val context: Context) : Interceptor {
 
     @Synchronized
     override fun intercept(chain: Interceptor.Chain): Response {
+        val originalRequest = chain.request()
+
+        if (!WebViewUtil.supportsWebView(context)) {
+            launchUI {
+                context.toast(R.string.webview_is_required, Toast.LENGTH_LONG)
+            }
+            return chain.proceed(originalRequest)
+        }
+
         initWebView
 
-        val originalRequest = chain.request()
         val response = chain.proceed(originalRequest)
 
         // Check if Cloudflare anti-bot is on
@@ -67,6 +79,7 @@ class CloudflareInterceptor(private val context: Context) : Interceptor {
     private fun resolveWithWebView(request: Request, oldCookie: Cookie?) {
         // We need to lock this thread until the WebView finds the challenge solution url, because
         // OkHttp doesn't support asynchronous interceptors.
+        XLog.d("Resolve with webview")
         val latch = CountDownLatch(1)
 
         var webView: WebView? = null
@@ -76,16 +89,17 @@ class CloudflareInterceptor(private val context: Context) : Interceptor {
         var isWebViewOutdated = false
 
         val origRequestUrl = request.url.toString()
-        val headers = request.headers.toMultimap().mapValues { it.value.getOrNull(0) ?: "" }
+        val headers = request.headers.toMultimap().mapValues { it.value.getOrNull(0) ?: "" }.toMutableMap()
+        headers["X-Requested-With"] = WebViewUtil.REQUESTED_WITH
 
         handler.post {
             val webview = WebView(context)
             webView = webview
-            webview.settings.javaScriptEnabled = true
+            webview.setDefaultSettings()
 
-            // Avoid set empty User-Agent, Chromium WebView will reset to default if empty
-            webview.settings.userAgentString =
-                request.header("User-Agent") ?: "Mozilla/5.0 (Windows NT 6.3; WOW64)"
+            // Avoid sending empty User-Agent, Chromium WebView will reset to default if empty
+            webview.settings.userAgentString = request.header("User-Agent")
+                ?: "Mozilla/5.0 (Windows NT 6.3; WOW64)"
 
             webview.webViewClient = object : WebViewClientCompat() {
                 override fun onPageFinished(view: WebView, url: String) {
@@ -100,7 +114,6 @@ class CloudflareInterceptor(private val context: Context) : Interceptor {
                         latch.countDown()
                     }
 
-                    // HTTP error codes are only received since M
                     if (url == origRequestUrl && !challengeFound) {
                         // The first request didn't return the challenge, abort.
                         latch.countDown()
@@ -116,7 +129,7 @@ class CloudflareInterceptor(private val context: Context) : Interceptor {
                 ) {
                     if (isMainFrame) {
                         if (errorCode == 503) {
-                            // Found the cloudflare challenge page.
+                            // Found the Cloudflare challenge page.
                             challengeFound = true
                         } else {
                             // Unlock thread, the challenge wasn't found.
@@ -155,6 +168,6 @@ class CloudflareInterceptor(private val context: Context) : Interceptor {
 
     companion object {
         private val SERVER_CHECK = arrayOf("cloudflare-nginx", "cloudflare")
-        private val COOKIE_NAMES = listOf("__cfduid", "cf_clearance")
+        private val COOKIE_NAMES = listOf("cf_clearance")
     }
 }

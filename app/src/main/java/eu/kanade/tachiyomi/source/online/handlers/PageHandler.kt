@@ -1,36 +1,96 @@
 package eu.kanade.tachiyomi.source.online.handlers
 
-import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.network.asObservableSuccess
+import com.elvishew.xlog.XLog
+import eu.kanade.tachiyomi.data.preference.PreferencesHelper
+import eu.kanade.tachiyomi.network.NetworkHelper
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
-import eu.kanade.tachiyomi.source.online.utils.MdUtil
-import okhttp3.CacheControl
-import okhttp3.Headers
-import okhttp3.OkHttpClient
-import okhttp3.Request
-import rx.Observable
+import eu.kanade.tachiyomi.source.online.dto.AtHomeDto
+import eu.kanade.tachiyomi.source.online.dto.ChapterDto
+import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.withContext
+import uy.kohesive.injekt.injectLazy
+import java.util.Date
 
-class PageHandler(val client: OkHttpClient, val headers: Headers, private val imageServer: String, val dataSaver: String?) {
+class PageHandler {
 
-    fun fetchPageList(chapter: SChapter): Observable<List<Page>> {
-        if (chapter.scanlator.equals("MangaPlus")) {
-            return client.newCall(pageListRequest(chapter))
-                .asObservableSuccess()
-                .map { response ->
-                    val chapterId = ApiChapterParser().externalParse(response)
-                    MangaPlusHandler(client).fetchPageList(chapterId)
+    val network: NetworkHelper by injectLazy()
+    val preferences: PreferencesHelper by injectLazy()
+    val mangaPlusHandler: MangaPlusHandler by injectLazy()
+    val imageHandler: ImageHandler by injectLazy()
+
+    suspend fun fetchPageList(chapter: SChapter, isLogged: Boolean): List<Page> {
+        return withContext(Dispatchers.IO) {
+            XLog.d("fetching page list")
+            try {
+                val chapterResponse = network.service.viewChapter(chapter.mangadex_chapter_id)
+                if (chapterResponse.isSuccessful.not()) {
+                    XLog.e(
+                        "error returned from chapterResponse ${
+                        chapterResponse.errorBody()?.string()
+                        }"
+                    )
+                    throw Exception("error returned from chapterResponse")
                 }
-        }
-        return client.newCall(pageListRequest(chapter))
-            .asObservableSuccess()
-            .map { response ->
-                ApiChapterParser().pageListParse(response)
+
+                if (chapter.scanlator.equals("mangaplus", true)) {
+                    val mpChpId = chapterResponse.body()!!.data.attributes.data.first()
+                        .substringAfterLast("/")
+                    mangaPlusHandler.fetchPageList(mpChpId)
+                } else {
+                    val service = if (isLogged) {
+                        network.authService
+                    } else {
+                        network.service
+                    }
+
+                    val atHomeResponse =
+                        service.getAtHomeServer(
+                            chapter.mangadex_chapter_id,
+                            preferences.usePort443Only()
+                        )
+
+                    if (atHomeResponse.isSuccessful.not()) {
+                        XLog.e(
+                            "error returned from atHomeResponse ${
+                            atHomeResponse.errorBody()?.string()
+                            }"
+                        )
+                        throw Exception("error returned from atHomeResponse")
+                    }
+
+                    pageListParse(
+                        chapterResponse.body()!!,
+                        atHomeResponse.body()!!,
+                        preferences.dataSaver()
+                    )
+                }
+            } catch (e: Exception) {
+                XLog.e("error processing page list ", e)
+                throw (e)
             }
+        }
     }
 
-    private fun pageListRequest(chapter: SChapter): Request {
-        val chpUrl = chapter.url.replace(MdUtil.oldApiChapter, MdUtil.newApiChapter).substringBefore(MdUtil.apiChapterSuffix)
-        return GET("${MdUtil.apiUrl}${chpUrl}${MdUtil.apiChapterSuffix}&server=$imageServer&saver=$dataSaver", headers, CacheControl.FORCE_NETWORK)
+    fun pageListParse(
+        chapterDto: ChapterDto,
+        atHomeDto: AtHomeDto,
+        dataSaver: Boolean,
+    ): List<Page> {
+        val hash = chapterDto.data.attributes.hash
+        val pageArray = if (dataSaver) {
+            chapterDto.data.attributes.dataSaver.map { "/data-saver/$hash/$it" }
+        } else {
+            chapterDto.data.attributes.data.map { "/data/$hash/$it" }
+        }
+        val now = Date().time
+
+        val pages = pageArray.mapIndexed { pos, imgUrl ->
+            Page(pos + 1, atHomeDto.baseUrl, imgUrl, chapterDto.data.id)
+        }
+
+        imageHandler.updateTokenTracker(chapterDto.data.id, now)
+
+        return pages
     }
 }

@@ -9,11 +9,11 @@ import eu.kanade.tachiyomi.data.database.inTransactionReturn
 import eu.kanade.tachiyomi.data.database.models.Manga
 import eu.kanade.tachiyomi.data.database.tables.MangaTable
 
-class MangaInfoPutResolver(val reset: Boolean = false) : PutResolver<Manga>() {
+class MangaInfoPutResolver() : PutResolver<Manga>() {
 
     override fun performPut(db: StorIOSQLite, manga: Manga) = db.inTransactionReturn {
         val updateQuery = mapToUpdateQuery(manga)
-        val contentValues = if (reset) resetToContentValues(manga) else mapToContentValues(manga)
+        val contentValues = mapToContentValues(manga)
 
         val numberOfRowsUpdated = db.lowLevel().update(updateQuery, contentValues)
         PutResult.newUpdateResult(numberOfRowsUpdated, updateQuery.table())
@@ -26,19 +26,11 @@ class MangaInfoPutResolver(val reset: Boolean = false) : PutResolver<Manga>() {
         .build()
 
     fun mapToContentValues(manga: Manga) = ContentValues(1).apply {
-        put(MangaTable.COL_TITLE, manga.originalTitle)
-        put(MangaTable.COL_GENRE, manga.originalGenre)
-        put(MangaTable.COL_AUTHOR, manga.originalAuthor)
-        put(MangaTable.COL_ARTIST, manga.originalArtist)
-        put(MangaTable.COL_DESCRIPTION, manga.originalDescription)
-    }
-
-    fun resetToContentValues(manga: Manga) = ContentValues(1).apply {
-        val splitter = "▒ ▒∩▒"
-        put(MangaTable.COL_TITLE, manga.title.split(splitter).last())
-        put(MangaTable.COL_GENRE, manga.genre?.split(splitter)?.lastOrNull())
-        put(MangaTable.COL_AUTHOR, manga.author?.split(splitter)?.lastOrNull())
-        put(MangaTable.COL_ARTIST, manga.artist?.split(splitter)?.lastOrNull())
-        put(MangaTable.COL_DESCRIPTION, manga.description?.split(splitter)?.lastOrNull())
+        put(MangaTable.COL_TITLE, manga.title)
+        put(MangaTable.COL_GENRE, manga.genre)
+        put(MangaTable.COL_AUTHOR, manga.author)
+        put(MangaTable.COL_ARTIST, manga.artist)
+        put(MangaTable.COL_DESCRIPTION, manga.description)
+        put(MangaTable.COL_STATUS, manga.status)
     }
 }

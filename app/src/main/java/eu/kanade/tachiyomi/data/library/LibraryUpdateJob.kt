@@ -25,16 +25,17 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
     companion object {
         private const val TAG = "LibraryUpdate"
 
-        fun setupTask(prefInterval: Int? = null) {
+        fun setupTask(context: Context, prefInterval: Int? = null) {
             val preferences = Injekt.get<PreferencesHelper>()
             val interval = prefInterval ?: preferences.libraryUpdateInterval().getOrDefault()
             if (interval > 0) {
                 val restrictions = preferences.libraryUpdateRestriction()!!
                 val acRestriction = "ac" in restrictions
-                val wifiRestriction = if ("wifi" in restrictions)
+                val wifiRestriction = if ("wifi" in restrictions) {
                     NetworkType.UNMETERED
-                else
+                } else {
                     NetworkType.CONNECTED
+                }
 
                 val constraints = Constraints.Builder()
                     .setRequiredNetworkType(wifiRestriction)
@@ -42,16 +43,19 @@ class LibraryUpdateJob(private val context: Context, workerParams: WorkerParamet
                     .build()
 
                 val request = PeriodicWorkRequestBuilder<LibraryUpdateJob>(
-                    interval.toLong(), TimeUnit.HOURS,
-                    10, TimeUnit.MINUTES
+                    interval.toLong(),
+                    TimeUnit.HOURS,
+                    10,
+                    TimeUnit.MINUTES
                 )
                     .addTag(TAG)
                     .setConstraints(constraints)
                     .build()
 
-                WorkManager.getInstance().enqueueUniquePeriodicWork(TAG, ExistingPeriodicWorkPolicy.REPLACE, request)
+                WorkManager.getInstance(context)
+                    .enqueueUniquePeriodicWork(TAG, ExistingPeriodicWorkPolicy.REPLACE, request)
             } else {
-                WorkManager.getInstance().cancelAllWorkByTag(TAG)
+                WorkManager.getInstance(context).cancelAllWorkByTag(TAG)
             }
         }
     }

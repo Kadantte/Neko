@@ -14,10 +14,11 @@
         <item name="colorPrimary">@color/app_color_primary</item>
         <item name="colorPrimaryVariant">@color/colorPrimary</item>
         <item name="colorSecondary">@color/background</item>
-        <item name="colorSecondaryVariant">@color/colorPrimary</item>
-        <item name="colorPrimaryDark">@color/app_color_primary</item>
-        <item name="colorControlActivated">@color/colorAccent</item>
+        <item name="colorSecondaryVariant">?attr/colorPrimaryVariant</item>
+        <item name="colorPrimaryDark">?colorPrimary</item>
         <item name="colorAccent">@color/colorAccent</item>
+        <item name="colorAccentText">@color/colorAccent</item>
+        <item name="colorControlActivated">?colorAccent</item>
         <item name="android:textColorPrimary">@color/textColorPrimary</item>
         <item name="android:textColorSecondary">@color/text_color_secondary</item>
         <item name="android:textColorHint">@color/text_color_hint</item>
@@ -30,8 +31,17 @@
         <item name="android:divider">@color/divider</item>
         <item name="android:listDivider">@drawable/line_divider</item>
         <item name="actionModeStyle">@style/CustomActionModeStyle</item>
-        <item name="android:fontFamily">@font/metropolis_regular</item>
-        <item name="fontFamily">@font/metropolis_regular</item>
+        <item name="android:fontFamily">@font/montserrat_regular</item>
+        <item name="fontFamily">@font/montserrat_regular</item>
+        <item name="colorOnAccent">@color/md_white_1000</item>
+        <item name="colorOnHopper">@color/md_white_1000</item>
+
+
+        <item name="unreadBadgeColor">@color/md_white_1000</item>
+        <item name="colorOnUnreadBadge">@color/md_black_1000</item>
+        <item name="downloadBadgeColor">@color/md_black_1000</item>
+        <item name="colorOnDownloadBadge">@color/md_white_1000</item>
+
 
         <!-- Themes -->
         <item name="windowActionModeOverlay">true</item>
@@ -39,19 +49,19 @@
         <item name="preferenceTheme">@style/Neko.Preference</item>
 
         <!-- Custom Attributes-->
-        <item name="actionBarTintColor">@color/textColorPrimary</item>
+        <item name="actionBarTintColor">?android:textColorPrimary</item>
         <item name="tabBarIconColor">?colorAccent</item>
         <item name="tabBarIconInactive">@color/colorPrimaryInactive</item>
         <item name="android:statusBarColor">@color/status_bar</item>
         <item name="android:navigationBarColor">#B3000000</item>
-        <item name="android:colorEdgeEffect">@color/colorAccent</item>
+        <item name="android:colorEdgeEffect">?colorAccent</item>
+        <item name="tabHighlightBackground">@color/accent_alpha</item>
 
         <!-- Material Dialog colors -->
-        <item name="md_color_title">@color/textColorPrimary</item>
-        <item name="md_color_content">@color/text_color_secondary</item>
-        <item name="md_color_button_text">@color/colorAccent</item>
-        <item name="md_background_color">@color/dialog</item>
-        <item name="md_color_widget">@color/colorAccent</item>
+        <item name="md_color_title">?android:attr/textColorPrimary</item>
+        <item name="md_color_content">?android:textColorSecondary</item>
+        <item name="md_color_button_text">?colorAccent</item>
+        <item name="md_background_color">?android:attr/colorBackground</item>
         <item name="md_button_casing">literal</item>
         <item name="md_corner_radius">16dp</item>
 
@@ -61,18 +71,66 @@
 
     <style name="Theme.Tachiyomi" parent="Theme.Base" />
 
-    <style name="Theme.Tachiyomi.AllBlue" parent="Theme.Tachiyomi">
+    <style name="Theme.Tachiyomi.AllBlue">
         <item name="colorPrimaryVariant">@color/app_color_primary</item>
         <item name="colorSecondary">@color/app_color_primary</item>
         <item name="tabBarIconColor">@color/md_white_1000</item>
         <item name="tabBarIconInactive">@color/md_white_1000_50</item>
+        <item name="tabHighlightBackground">@color/md_white_1000_50</item>
         <item name="actionBarTintColor">@color/md_white_1000</item>
         <item name="actionBarTheme">@style/Theme.ActionBar.Dark.DayNight</item>
         <item name="android:windowLightStatusBar">false</item>
         <item name="android:windowLightNavigationBar" tools:targetApi="27">false</item>
     </style>
 
-    <style name="Theme.Tachiyomi.Amoled" parent="Theme.Tachiyomi" />
+    <style name="ThemeOverlay.Tachiyomi.AllBlue" parent="">
+        <item name="colorPrimaryVariant">@color/app_color_primary</item>
+        <item name="colorSecondary">@color/app_color_primary</item>
+        <item name="actionBarTintColor">@color/md_white_1000</item>
+        <item name="android:windowLightStatusBar">false</item>
+        <item name="android:windowLightNavigationBar" tools:targetApi="27">false</item>
+    </style>
+
+    <style name="ThemeOverlay.Tachiyomi.Amoled" parent="" />
+
+    <style name="Theme.Tachiyomi.FlatLime" />
+
+    <style name="Theme.Tachiyomi.Outrun" />
+
+    <style name="Theme.Tachiyomi.MidnightDusk">
+        <item name="colorPrimary">@color/primaryDuskDawn</item>
+        <item name="colorAccent">@color/colorAccentDuskDawn</item>
+        <item name="colorAccentText">@color/colorAccentDuskDawnText</item>
+        <item name="colorPrimaryVariant">@color/dialogDuskDawn</item>
+        <item name="colorSecondary">@color/backgroundDuskDawn</item>
+        <item name="colorSecondaryVariant">@color/dialogDuskDawn</item>
+        <item name="background">@color/backgroundDuskDawn</item>
+        <item name="android:textColorPrimary">@color/textPrimaryDuskDawn</item>
+        <item name="unreadBadgeColor">?attr/colorAccent</item>
+        <item name="colorOnUnreadBadge">?attr/colorOnAccent</item>
+        <item name="colorOnHopper">?attr/colorOnAccent</item>
+        <item name="android:colorBackground">@color/backgroundDuskDawn</item>
+        <item name="actionBarTintColor">@color/appBarTextDuskDawn</item>
+    </style>
+
+    <style name="Theme.Tachiyomi.Strawberries">
+        <item name="colorAccent">@color/colorAccentStrawberry</item>
+        <item name="colorAccentText">@color/colorAccentStrawberryText</item>
+        <item name="unreadBadgeColor">?attr/colorAccent</item>
+        <item name="colorOnUnreadBadge">?attr/colorOnAccent</item>
+        <item name="colorOnHopper">?attr/colorOnAccent</item>
+
+    </style>
+
+    <style name="Theme.Tachiyomi.MangaDex">
+        <item name="colorAccent">@color/colorAccentMangaDex</item>
+        <item name="colorAccentText">@color/md_white_1000</item>
+        <item name="unreadBadgeColor">?attr/colorAccent</item>
+        <item name="colorOnUnreadBadge">?attr/colorOnAccent</item>
+        <item name="colorOnHopper">?attr/colorOnAccent</item>
+    </style>
+
+    <style name="Theme.Tachiyomi.Monet" />
 
     <!--===============-->
     <!-- Launch Screen -->

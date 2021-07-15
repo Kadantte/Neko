@@ -4,6 +4,7 @@ import android.content.Context
 import android.content.Intent
 import android.net.Uri
 import android.os.Environment
+import android.os.StatFs
 import androidx.core.content.ContextCompat
 import androidx.core.os.EnvironmentCompat
 import com.hippo.unifile.UniFile
@@ -28,6 +29,18 @@ object DiskUtil {
             size = f.length()
         }
         return size
+    }
+
+    /**
+     * Gets the available space for the disk that a file path points to, in bytes.
+     */
+    fun getAvailableStorageSpace(f: UniFile): Long {
+        return try {
+            val stat = StatFs(f.uri.path)
+            stat.availableBlocksLong * stat.blockSizeLong
+        } catch (_: Exception) {
+            -1L
+        }
     }
 
     /**
@@ -85,9 +98,9 @@ object DiskUtil {
      * replacing any invalid characters with "_". This method doesn't allow hidden files (starting
      * with a dot), but you can manually add it later.
      */
-    fun buildValidFilename(origName: String): String {
+    fun buildValidFilename(origName: String, suffix: String = ""): String {
         val name = origName.trim('.', ' ')
-        if (name.isNullOrEmpty()) {
+        if (name.isEmpty()) {
             return "(invalid)"
         }
         val sb = StringBuilder(name.length)
@@ -98,9 +111,13 @@ object DiskUtil {
                 sb.append('_')
             }
         }
-        // Even though vfat allows 255 UCS-2 chars, we might eventually write to
-        // ext4 through a FUSE layer, so use that limit minus 15 reserved characters.
-        return sb.toString().take(240)
+        if (suffix.isNotEmpty()) {
+            return sb.toString().take(240 - suffix.length) + suffix
+        } else {
+            // Even though vfat allows 255 UCS-2 chars, we might eventually write to
+            // ext4 through a FUSE layer, so use that limit minus  reserved characters.
+            return sb.toString().take(240)
+        }
     }
 
     /**

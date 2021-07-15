@@ -4,19 +4,24 @@ import android.app.Dialog
 import android.os.Bundle
 import androidx.preference.PreferenceScreen
 import com.afollestad.materialdialogs.MaterialDialog
-import com.afollestad.materialdialogs.checkbox.checkBoxPrompt
-import com.afollestad.materialdialogs.checkbox.isCheckPromptChecked
 import com.afollestad.materialdialogs.list.listItemsMultiChoice
+import eu.kanade.tachiyomi.BuildConfig
 import eu.kanade.tachiyomi.R
-import eu.kanade.tachiyomi.data.library.LibraryUpdateService
+import eu.kanade.tachiyomi.data.database.DatabaseHelper
 import eu.kanade.tachiyomi.data.preference.PreferenceKeys
 import eu.kanade.tachiyomi.data.preference.PreferencesHelper
+import eu.kanade.tachiyomi.data.track.TrackManager
+import eu.kanade.tachiyomi.jobs.follows.StatusSyncJob
 import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.source.SourceManager
-import eu.kanade.tachiyomi.source.online.HttpSource
-import eu.kanade.tachiyomi.source.online.MangaDex
+import eu.kanade.tachiyomi.source.online.handlers.FollowsHandler
+import eu.kanade.tachiyomi.source.online.utils.FollowStatus
 import eu.kanade.tachiyomi.source.online.utils.MdLang
+import eu.kanade.tachiyomi.source.online.utils.MdUtil
 import eu.kanade.tachiyomi.ui.base.controller.DialogController
+import eu.kanade.tachiyomi.util.system.executeOnIO
+import eu.kanade.tachiyomi.util.system.launchIO
+import eu.kanade.tachiyomi.v5.job.V5MigrationJob
 import eu.kanade.tachiyomi.widget.preference.MangadexLoginDialog
 import eu.kanade.tachiyomi.widget.preference.MangadexLogoutDialog
 import eu.kanade.tachiyomi.widget.preference.SiteLoginPreference
@@ -28,9 +33,9 @@ class SettingsSiteController :
     MangadexLoginDialog.Listener,
     MangadexLogoutDialog.Listener {
 
-    private val mdex by lazy { Injekt.get<SourceManager>().getMangadex() as HttpSource }
+    private val mdex by lazy { Injekt.get<SourceManager>().getMangadex() }
 
-    override fun setupPreferenceScreen(screen: PreferenceScreen) = with(screen) {
+    override fun setupPreferenceScreen(screen: PreferenceScreen) = screen.apply {
         titleRes = R.string.site_specific_settings
 
         val sourcePreference = SiteLoginPreference(context, mdex).apply {
@@ -47,67 +52,66 @@ class SettingsSiteController :
                     dialog.showDialog(router)
                 }
             }
+            this.isIconSpaceReserved = false
         }
 
-        preferenceScreen.addPreference(sourcePreference)
+        addPreference(sourcePreference)
 
         preference {
             titleRes = R.string.show_languages
             onClick {
-                val ctrl = SettingsSiteController.ChooseLanguagesDialog(preferences)
+                val ctrl = ChooseLanguagesDialog(preferences)
                 ctrl.targetController = this@SettingsSiteController
                 ctrl.showDialog(router)
             }
         }
 
-        switchPreference {
-            key = PreferenceKeys.useCacheSource
-            titleRes = R.string.use_cache_source
-            defaultValue = false
-        }
-
-        listPreference(activity) {
-            key = PreferenceKeys.showR18
-            titleRes = R.string.show_r18_title
+        multiSelectListPreferenceMat(activity) {
+            key = PreferenceKeys.contentRating
+            titleRes = R.string.content_rating_title
+            summaryRes = R.string.content_rating_summary
             entriesRes = arrayOf(
-                R.string.show_r18_no,
-                R.string.show_r18_all,
-                R.string.show_r18_show
+                R.string.content_rating_safe,
+                R.string.content_rating_suggestive,
+                R.string.content_rating_erotica,
+                R.string.content_rating_pornographic,
             )
-            entryValues = listOf("0", "1", "2")
-            summary = "%s"
+            entryValues = listOf(
+                "safe",
+                "suggestive",
+                "erotica",
+                "pornographic"
+            )
+
+            defValue = setOf("safe", "suggestive")
+
+            defaultValue = listOf("safe", "suggestive")
         }
 
         switchPreference {
-            key = PreferenceKeys.showR18Filter
-            titleRes = R.string.show_r18_filter_in_search
+            key = PreferenceKeys.showContentRatingFilter
+            titleRes = R.string.show_content_rating_filter_in_search
             defaultValue = true
         }
 
-        listPreference(activity) {
-            key = PreferenceKeys.imageServer
-            titleRes = R.string.image_server
-            entries = MangaDex.SERVER_PREF_ENTRIES
-            entryValues = MangaDex.SERVER_PREF_ENTRY_VALUES
-            summary = "%s"
+        switchPreference {
+            key = PreferenceKeys.enablePort443Only
+            titleRes = R.string.use_port_443_title
+            summaryRes = R.string.use_port_443_summary
+            defaultValue = true
         }
 
         switchPreference {
             key = PreferenceKeys.dataSaver
             titleRes = R.string.data_saver
+            summaryRes = R.string.data_saver_summary
             defaultValue = false
         }
 
         switchPreference {
-            key = PreferenceKeys.lowQualityCovers
-            titleRes = R.string.low_quality_covers
-            defaultValue = false
-        }
-
-        switchPreference {
-            key = PreferenceKeys.forceLatestCovers
-            titleRes = R.string.use_latest_cover
-            summaryRes = R.string.use_latest_cover_summary
+            key = PreferenceKeys.readingSync
+            titleRes = R.string.reading_sync
+            summaryRes = R.string.reading_sync_summary
             defaultValue = false
         }
 
@@ -117,39 +121,51 @@ class SettingsSiteController :
 
             onClick {
                 MaterialDialog(activity!!).show {
-                    checkBoxPrompt(text = "Sync planned to read also?", onToggle = null)
-                    positiveButton(android.R.string.ok) { dialog ->
-                        val type = when {
-                            dialog.isCheckPromptChecked() -> LibraryUpdateService.Target.SYNC_FOLLOWS_PLUS
-                            else -> LibraryUpdateService.Target.SYNC_FOLLOWS
-                        }
-                        LibraryUpdateService.start(
-                            context,
-                            target = type
-                        )
+                    listItemsMultiChoice(
+                        items = context.resources.getStringArray(R.array.follows_options).toList()
+                            .let { it.subList(1, it.size) },
+                        initialSelection = intArrayOf(0, 5)
+                    ) { _, indices, _ ->
+                        preferences.mangadexSyncToLibraryIndexes()
+                            .set(indices.map { (it + 1).toString() }.toSet())
+                        StatusSyncJob.doWorkNow(context, StatusSyncJob.entireFollowsFromDex)
                     }
+                    positiveButton(android.R.string.ok)
+                    negativeButton(android.R.string.cancel)
                 }
             }
         }
-
 
         preference {
             titleRes = R.string.push_favorites_to_mangadex
             summaryRes = R.string.push_favorites_to_mangadex_summary
 
             onClick {
-                LibraryUpdateService.start(
-                    context,
-                    target = LibraryUpdateService.Target.PUSH_FAVORITES
-                )
+                StatusSyncJob.doWorkNow(context, StatusSyncJob.entireLibraryToDex)
             }
         }
 
-        switchPreference {
-            key = PreferenceKeys.markChaptersFromMDList
-            titleRes = R.string.mark_mdlist_chapters_read
-            summaryRes = R.string.mark_mdlist_chapters_read_summary
-            defaultValue = false
+        if (BuildConfig.DEBUG) {
+            preference {
+                title = "Unfollow all library manga"
+                onClick {
+                    launchIO {
+                        val db = Injekt.get<DatabaseHelper>()
+                        val followsHandler = Injekt.get<FollowsHandler>()
+                        val trackManager: TrackManager = Injekt.get()
+                        db.getLibraryMangaList().executeAsBlocking().forEach {
+                            followsHandler.updateFollowStatus(
+                                MdUtil.getMangaId(it.url),
+                                FollowStatus.UNFOLLOWED
+                            )
+                            db.getMDList(it).executeOnIO()?.let { _ ->
+                                db.deleteTrackForManga(it, trackManager.mdList)
+                                    .executeAsBlocking()
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         switchPreference {
@@ -157,6 +173,19 @@ class SettingsSiteController :
             titleRes = R.string.add_favorites_as_planned_to_read
             summaryRes = R.string.add_favorites_as_planned_to_read_summary
             defaultValue = false
+        }
+
+        preference {
+            titleRes = R.string.v5_migration_service
+            summary = context.resources.getString(R.string.v5_migration_desc)
+            onClick {
+                MaterialDialog(activity!!).show {
+                    title(text = "This will start legacy id migration (Note: This uses data)")
+                    positiveButton(android.R.string.ok) {
+                        V5MigrationJob.doWorkNow()
+                    }
+                }
+            }
         }
     }
 
@@ -185,9 +214,9 @@ class SettingsSiteController :
         override fun onCreateDialog(savedViewState: Bundle?): Dialog {
             val activity = activity!!
 
-            val options = MdLang.values().map { Pair(it.dexLang, it.name) }
+            val options = MdLang.values().map { Pair(it.lang, it.prettyPrint) }
             val initialLangs = preferences!!.langsToShow().get().split(",")
-                .map { lang -> options.indexOfFirst { it.first.equals(lang) } }.toIntArray()
+                .map { lang -> options.indexOfFirst { it.first == lang } }.toIntArray()
 
             return MaterialDialog(activity)
                 .title(R.string.show_languages)

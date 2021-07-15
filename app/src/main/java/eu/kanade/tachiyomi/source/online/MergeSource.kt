@@ -8,7 +8,7 @@ import com.google.gson.GsonBuilder
 import com.google.gson.JsonArray
 import com.google.gson.JsonElement
 import eu.kanade.tachiyomi.network.GET
-import eu.kanade.tachiyomi.network.asObservableSuccess
+import eu.kanade.tachiyomi.network.await
 import eu.kanade.tachiyomi.network.newCallWithProgress
 import eu.kanade.tachiyomi.source.model.Page
 import eu.kanade.tachiyomi.source.model.SChapter
@@ -19,7 +19,6 @@ import info.debatty.java.stringsimilarity.Levenshtein
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import okhttp3.Response
-import rx.Observable
 import java.text.SimpleDateFormat
 import java.util.Locale
 
@@ -36,8 +35,8 @@ class MergeSource : ReducedHttpSource() {
     suspend fun searchManga(query: String): List<SManga> {
         return withContext(Dispatchers.IO) {
             if (directory == null) {
-                val response = client.newCall(GET("$baseUrl/search/", headers)).execute()
-                directory = gson.fromJson<JsonArray>(directoryFromResponse(response))
+                val response = client.newCall(GET("$baseUrl/search/", headers)).await()
+                directory = gson.fromJson(directoryFromResponse(response))
             }
             val textDistance = Levenshtein()
             val textDistance2 = JaroWinkler()
@@ -57,8 +56,9 @@ class MergeSource : ReducedHttpSource() {
                 }.sortedBy { textDistance.distance(query, it["s"].string) }
 
                 // take similar results
-                val results2 = directory!!.map { Pair(textDistance2.distance(it["s"].string, query), it) }
-                    .filter { it.first < 0.3 }.sortedBy { it.first }.map { it.second }
+                val results2 =
+                    directory!!.map { Pair(textDistance2.distance(it["s"].string, query), it) }
+                        .filter { it.first < 0.3 }.sortedBy { it.first }.map { it.second }
 
                 val combinedResults = results.union(results2)
 
@@ -72,35 +72,40 @@ class MergeSource : ReducedHttpSource() {
     }
 
     private fun parseMangaList(json: List<JsonElement>): List<SManga> {
-        return json.map { it ->
+        return json.map { jsonElement ->
             SManga.create().apply {
-                title = it["s"].string
-                url = "/manga/${it["i"].string}"
-                thumbnail_url = "https://cover.nep.li/cover/${it["i"].string}.jpg"
+                title = jsonElement["s"].string
+                url = "/manga/${jsonElement["i"].string}"
+                thumbnail_url = "https://cover.nep.li/cover/${jsonElement["i"].string}.jpg"
             }
         }
     }
 
     suspend fun fetchChapters(mergeMangaUrl: String): List<SChapter> {
         return withContext(Dispatchers.IO) {
-            val response = client.newCall(GET("$baseUrl$mergeMangaUrl", headers)).execute()
-            val vmChapters = response.asJsoup().select("script:containsData(MainFunction)").first().data()
-                .substringAfter("vm.Chapters = ").substringBefore(";")
+            val response = client.newCall(GET("$baseUrl$mergeMangaUrl", headers)).await()
+            val vmChapters =
+                response.asJsoup().select("script:containsData(MainFunction)").first()!!.data()
+                    .substringAfter("vm.Chapters = ").substringBefore(";")
 
             return@withContext gson.fromJson<JsonArray>(vmChapters).map { json ->
                 val indexChapter = json["Chapter"].string
                 SChapter.create().apply {
-
                     val type = json["Type"].string
 
-                    name = json["ChapterName"].nullString.let { if (it.isNullOrEmpty()) "$type ${chapterImage(indexChapter)}" else it }
+                    name = json["ChapterName"].nullString.let {
+                        if (it.isNullOrEmpty()) "$type ${
+                            chapterImage(indexChapter)
+                        }" else it
+                    }
 
                     val season = name.substringAfter("Volume ", "")
                     if (season.isNotEmpty()) {
                         vol = season.substringBefore(" ")
                     }
 
-                    val seasonAnotherWay = name.substringBefore(" - Chapter", "").substringAfter("S")
+                    val seasonAnotherWay =
+                        name.substringBefore(" - Chapter", "").substringAfter("S")
 
                     if (seasonAnotherWay.isNotEmpty()) {
                         vol = seasonAnotherWay
@@ -117,7 +122,8 @@ class MergeSource : ReducedHttpSource() {
                         }
                     }
 
-                    url = "/read-online/" + response.request.url.toString().substringAfter("/manga/") + chapterURLEncode(indexChapter)
+                    url = "/read-online/" + response.request.url.toString()
+                        .substringAfter("/manga/") + chapterURLEncode(indexChapter)
                     mangadex_chapter_id = url.substringAfter("/read-online/")
                     date_upload = try {
                         json["Date"].nullString?.let { dateFormat.parse("$it +0600")?.time } ?: 0
@@ -135,18 +141,18 @@ class MergeSource : ReducedHttpSource() {
      *
      * @param chapter the chapter whose page list has to be fetched.
      */
-    override fun fetchPageList(chapter: SChapter): Observable<List<Page>> {
-        return client.newCall(GET("$baseUrl${chapter.url}", headers))
-            .asObservableSuccess()
-            .map { response ->
-                pageListParse(response)
-            }
+    override suspend fun fetchPageList(chapter: SChapter): List<Page> {
+        val response = client.newCall(GET("$baseUrl${chapter.url}", headers)).await()
+        return pageListParse(response)
     }
 
     fun pageListParse(response: Response): List<Page> {
         val document = response.asJsoup()
-        val script = document.select("script:containsData(MainFunction)").first().data()
-        val curChapter = gson.fromJson<JsonElement>(script.substringAfter("vm.CurChapter = ").substringBefore(";"))
+        val script = document.select("script:containsData(MainFunction)").first()!!.data()
+        val curChapter = gson.fromJson<JsonElement>(
+            script.substringAfter("vm.CurChapter = ")
+                .substringBefore(";")
+        )
 
         val pageTotal = curChapter["Page"].string.toInt()
 
@@ -166,7 +172,7 @@ class MergeSource : ReducedHttpSource() {
 
     // don't use ";" for substringBefore() !
     private fun directoryFromResponse(response: Response): String {
-        return response.asJsoup().select("script:containsData(MainFunction)").first().data()
+        return response.asJsoup().select("script:containsData(MainFunction)").first()!!.data()
             .substringAfter("vm.Directory = ").substringBefore("vm.GetIntValue").trim()
             .replace(";", " ")
     }
@@ -187,8 +193,13 @@ class MergeSource : ReducedHttpSource() {
         if (1 != t) {
             index = "-index-$t"
         }
-        val n = e.substring(1, e.length - 1)
-
+        val dgt = when {
+            e.toInt() < 100100 -> 4
+            e.toInt() < 101000 -> 3
+            e.toInt() < 110000 -> 2
+            else -> 1
+        }
+        val n = e.substring(dgt, e.length - 1)
         var suffix = ""
         val path = e.substring(e.length - 1).toInt()
         if (0 != path) {
@@ -197,9 +208,8 @@ class MergeSource : ReducedHttpSource() {
         return "-chapter-$n$suffix$index.html"
     }
 
-    override fun fetchImage(page: Page): Observable<Response> {
-        return client.newCallWithProgress(GET(page.imageUrl!!, headers), page)
-            .asObservableSuccess()
+    override suspend fun fetchImage(page: Page): Response {
+        return client.newCallWithProgress(GET(page.imageUrl!!, headers), page).await()
     }
 
     companion object {

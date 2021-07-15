@@ -4,6 +4,7 @@ import android.annotation.SuppressLint
 import android.app.Dialog
 import android.content.Context
 import android.content.Intent
+import android.os.Build
 import android.os.Bundle
 import android.os.Environment
 import android.os.PowerManager
@@ -21,10 +22,11 @@ import eu.kanade.tachiyomi.data.cache.CoverCache
 import eu.kanade.tachiyomi.data.database.DatabaseHelper
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.data.download.DownloadProvider
-import eu.kanade.tachiyomi.data.library.LibraryUpdateService
-import eu.kanade.tachiyomi.data.library.LibraryUpdateService.Target
 import eu.kanade.tachiyomi.data.preference.PreferenceKeys
+import eu.kanade.tachiyomi.jobs.tracking.TrackingSyncJob
 import eu.kanade.tachiyomi.network.NetworkHelper
+import eu.kanade.tachiyomi.network.PREF_DOH_CLOUDFLARE
+import eu.kanade.tachiyomi.network.PREF_DOH_GOOGLE
 import eu.kanade.tachiyomi.source.SourceManager
 import eu.kanade.tachiyomi.ui.base.controller.DialogController
 import eu.kanade.tachiyomi.util.log.XLogLevel
@@ -42,6 +44,7 @@ import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
 import uy.kohesive.injekt.injectLazy
 import java.io.File
+import java.util.Locale
 
 class SettingsAdvancedController : SettingsController() {
 
@@ -53,8 +56,10 @@ class SettingsAdvancedController : SettingsController() {
 
     private val coverCache: CoverCache by injectLazy()
 
+    private val downloadManager: DownloadManager by injectLazy()
+
     @SuppressLint("BatteryLife")
-    override fun setupPreferenceScreen(screen: PreferenceScreen) = with(screen) {
+    override fun setupPreferenceScreen(screen: PreferenceScreen) = screen.apply {
         titleRes = R.string.advanced
 
         switchPreference {
@@ -69,14 +74,34 @@ class SettingsAdvancedController : SettingsController() {
 
         preference {
             key = "dump_crash_logs"
-            titleRes = R.string.pref_dump_crash_logs
-            summaryRes = R.string.pref_dump_crash_logs_summary
+            titleRes = R.string.dump_crash_logs
+            summaryRes = R.string.saves_error_logs
 
             onClick {
                 CrashLogUtil(context).dumpLogs()
             }
         }
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.M) {
+            val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager?
+            if (pm != null) preference {
+                key = "disable_batt_opt"
+                titleRes = R.string.disable_battery_optimization
+                summaryRes = R.string.disable_if_issues_with_updating
 
+                onClick {
+                    val packageName: String = context.packageName
+                    if (!pm.isIgnoringBatteryOptimizations(packageName)) {
+                        val intent = Intent().apply {
+                            action = Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS
+                            data = "package:$packageName".toUri()
+                        }
+                        startActivity(intent)
+                    } else {
+                        context.toast(R.string.battery_optimization_disabled)
+                    }
+                }
+            }
+        }
         preferenceCategory {
             titleRes = R.string.data_management
             preference {
@@ -88,16 +113,26 @@ class SettingsAdvancedController : SettingsController() {
             }
 
             preference {
+                titleRes = R.string.force_download_cache_refresh
+                summaryRes = R.string.force_download_cache_refresh_summary
+                onClick { downloadManager.refreshCache() }
+            }
+
+            preference {
+                key = "clean_cached_covers"
                 titleRes = R.string.clean_up_cached_covers
-                summary = context.getString(R.string.delete_old_covers_in_library_used_, coverCache.getChapterCacheSize())
+                summary = context.getString(
+                    R.string.delete_old_covers_in_library_used_,
+                    coverCache.getChapterCacheSize()
+                )
 
                 onClick {
                     context.toast(R.string.starting_cleanup)
                     coverCache.deleteOldCovers()
                 }
             }
-
             preference {
+                key = "clear_cached_not_library"
                 titleRes = R.string.clear_cached_covers_non_library
                 summary = context.getString(
                     R.string.delete_all_covers__not_in_library_used_,
@@ -109,10 +144,12 @@ class SettingsAdvancedController : SettingsController() {
                     coverCache.deleteAllCachedCovers()
                 }
             }
-
             preference {
+                key = "clean_downloaded_chapters"
                 titleRes = R.string.clean_up_downloaded_chapters
+
                 summaryRes = R.string.delete_unused_chapters
+
                 onClick {
                     val ctrl = CleanupDownloadsDialogController()
                     ctrl.targetController = this@SettingsAdvancedController
@@ -120,6 +157,7 @@ class SettingsAdvancedController : SettingsController() {
                 }
             }
             preference {
+                key = "clear_database"
                 titleRes = R.string.clear_database
                 summaryRes = R.string.clear_database_summary
 
@@ -133,8 +171,8 @@ class SettingsAdvancedController : SettingsController() {
 
         preferenceCategory {
             titleRes = R.string.network
-
             preference {
+                key = "clear_cookies"
                 titleRes = R.string.clear_cookies
 
                 onClick {
@@ -142,30 +180,43 @@ class SettingsAdvancedController : SettingsController() {
                     activity?.toast(R.string.cookies_cleared)
                 }
             }
-            switchPreference {
-                key = PreferenceKeys.enableDoh
-                titleRes = R.string.dns_over_https
-                summaryRes = R.string.requires_app_restart
-                defaultValue = false
+
+            intListPreference(activity) {
+                key = PreferenceKeys.dohProvider
+                titleRes = R.string.doh
+                entriesRes = arrayOf(R.string.disabled, R.string.cloudflare, R.string.google)
+                entryValues = listOf(-1, PREF_DOH_CLOUDFLARE, PREF_DOH_GOOGLE)
+
+                defaultValue = -1
+                onChange {
+                    activity?.toast(R.string.requires_app_restart)
+                    true
+                }
             }
         }
 
         preferenceCategory {
             titleRes = R.string.library
             preference {
+                key = "refresh_teacking_meta"
                 titleRes = R.string.refresh_tracking_metadata
                 summaryRes = R.string.updates_tracking_details
 
-                onClick { LibraryUpdateService.start(context, target = Target.TRACKING) }
+                onClick {
+                    TrackingSyncJob.doWorkNow(context)
+                }
             }
         }
-
         intListPreference(activity) {
             key = PreferenceKeys.logLevel
             titleRes = R.string.log_level
-            customSummary = context.getString(R.string.log_level_summary) + "\nCurrent Level: " + XLogLevel.values()[prefs.logLevel()]
+            summary =
+                context.getString(R.string.log_level_summary) + "\nCurrent Level: " + XLogLevel.values()[prefs.logLevel()]
             entries = XLogLevel.values().map {
-                "${it.name.toLowerCase().capitalize()} (${it.description})"
+                "${
+                it.name.lowercase(Locale.ENGLISH)
+                    .replaceFirstChar { if (it.isLowerCase()) it.titlecase(Locale.ENGLISH) else it.toString() }
+                } (${it.description})"
             }
             entryValues = XLogLevel.values().indices.toList()
             defaultValue = if (BuildConfig.DEBUG) 2 else 0
@@ -179,37 +230,23 @@ class SettingsAdvancedController : SettingsController() {
                 logFolder.deleteRecursively()
             }
         }
-
-        val pm = context.getSystemService(Context.POWER_SERVICE) as? PowerManager?
-        if (pm != null) preference {
-            titleRes = R.string.disable_battery_optimization
-            summaryRes = R.string.disable_if_issues_with_updating
-
-            onClick {
-                val packageName: String = context.packageName
-                if (!pm.isIgnoringBatteryOptimizations(packageName)) {
-                    val intent = Intent().apply {
-                        action = Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS
-                        data = "package:$packageName".toUri()
-                    }
-                    startActivity(intent)
-                } else {
-                    context.toast(R.string.battery_optimization_disabled)
-                }
-            }
-        }
     }
 
-    class CleanupDownloadsDialogController() : DialogController() {
+    class CleanupDownloadsDialogController : DialogController() {
         override fun onCreateDialog(savedViewState: Bundle?): Dialog {
-
             return MaterialDialog(activity!!).show {
-
                 title(R.string.clean_up_downloaded_chapters)
-                    .listItemsMultiChoice(R.array.clean_up_downloads, disabledIndices = intArrayOf(0), initialSelection = intArrayOf(0, 1, 2)) { dialog, selections, items ->
+                    .listItemsMultiChoice(
+                        R.array.clean_up_downloads,
+                        disabledIndices = intArrayOf(0),
+                        initialSelection = intArrayOf(0, 1, 2)
+                    ) { _, selections, _ ->
                         val deleteRead = selections.contains(1)
                         val deleteNonFavorite = selections.contains(2)
-                        (targetController as? SettingsAdvancedController)?.cleanupDownloads(deleteRead, deleteNonFavorite)
+                        (targetController as? SettingsAdvancedController)?.cleanupDownloads(
+                            deleteRead,
+                            deleteNonFavorite
+                        )
                     }
                 positiveButton(android.R.string.ok)
                 negativeButton(android.R.string.cancel)
@@ -219,18 +256,19 @@ class SettingsAdvancedController : SettingsController() {
 
     private fun cleanupDownloads(removeRead: Boolean, removeNonFavorite: Boolean) {
         if (job?.isActive == true) return
+
         activity?.toast(R.string.starting_cleanup)
         job = GlobalScope.launch(Dispatchers.IO) {
             val sourceManager: SourceManager = Injekt.get()
-            val downloadManager: DownloadManager = Injekt.get()
             val downloadProvider = DownloadProvider(activity!!)
             var foldersCleared = 0
-            val mangaList = db.getMangas().executeAsBlocking()
+            val mangaList = db.getMangaList().executeAsBlocking()
             val source = sourceManager.getMangadex()
             val mangaFolders = downloadManager.getMangaFolders(source)
 
             for (mangaFolder in mangaFolders) {
-                val manga = mangaList.find { downloadProvider.getMangaDirName(it) == mangaFolder.name }
+                val manga =
+                    mangaList.find { downloadProvider.getMangaDirName(it) == mangaFolder.name }
                 if (manga == null) {
                     // download is orphaned delete it if remove non favorited is enabled
                     if (removeNonFavorite) {
@@ -240,7 +278,13 @@ class SettingsAdvancedController : SettingsController() {
                     continue
                 }
                 val chapterList = db.getChapters(manga).executeAsBlocking()
-                foldersCleared += downloadManager.cleanupChapters(chapterList, manga, source, removeRead, removeNonFavorite)
+                foldersCleared += downloadManager.cleanupChapters(
+                    chapterList,
+                    manga,
+                    source,
+                    removeRead,
+                    removeNonFavorite
+                )
             }
             launchUI {
                 val activity = activity ?: return@launchUI
@@ -280,7 +324,8 @@ class SettingsAdvancedController : SettingsController() {
                     activity?.toast(
                         resources?.getQuantityString(
                             R.plurals.cache_cleared,
-                            deletedFiles, deletedFiles
+                            deletedFiles,
+                            deletedFiles
                         )
                     )
                     findPreference(CLEAR_CACHE_KEY)?.summary =
@@ -301,7 +346,7 @@ class SettingsAdvancedController : SettingsController() {
     }
 
     private fun clearDatabase() {
-        db.deleteMangasNotInLibrary().executeAsBlocking()
+        db.deleteMangaListNotInLibrary().executeAsBlocking()
         db.deleteHistoryNoLastRead().executeAsBlocking()
         activity?.toast(R.string.clear_database_completed)
     }

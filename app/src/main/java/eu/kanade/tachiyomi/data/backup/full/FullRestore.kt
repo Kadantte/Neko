@@ -47,18 +47,20 @@ class FullRestore(val context: Context, val job: Job?) {
     internal val trackManager: TrackManager by injectLazy()
 
     suspend fun restoreBackup(uri: Uri) {
-
         backupManager = FullBackupManager(context)
 
-        val backupString = context.contentResolver.openInputStream(uri)!!.source().gzip().buffer().use { it.readByteArray() }
+        val backupString = context.contentResolver.openInputStream(uri)!!.source().gzip().buffer()
+            .use { it.readByteArray() }
         val backup = backupManager.parser.decodeFromByteArray(BackupSerializer, backupString)
 
-        val partitionedList = backup.backupManga.partition { backupManager.sourceManager.isMangadex(it.source) }
+        val partitionedList =
+            backup.backupManga.partition { backupManager.sourceManager.isMangadex(it.source) }
 
         val dexManga = partitionedList.first
         skippedTitles = partitionedList.second.map { it.title }
         totalAmount = backup.backupManga.size
         skippedAmount = totalAmount - dexManga.size
+        restoreAmount = dexManga.size
         trackingErrors.clear()
         errors.clear()
         cancelled = 0
@@ -79,7 +81,18 @@ class FullRestore(val context: Context, val job: Job?) {
         errors.addAll(tmpErrors)
 
         val logFile = restoreHelper.writeErrorLog(errors, skippedAmount, skippedTitles)
-        restoreHelper.showResultNotification(logFile.parent, logFile.name, categoriesAmount, restoreProgress, restoreAmount, skippedAmount, totalAmount, cancelled, errors, trackingErrors)
+        restoreHelper.showResultNotification(
+            logFile.parent,
+            logFile.name,
+            categoriesAmount,
+            restoreProgress,
+            restoreAmount,
+            skippedAmount,
+            totalAmount,
+            cancelled,
+            errors,
+            trackingErrors
+        )
     }
 
     private fun restoreCategories(backupCategories: List<BackupCategory>) {
@@ -94,7 +107,11 @@ class FullRestore(val context: Context, val job: Job?) {
     private fun restoreManga(backupManga: BackupManga, backupCategories: List<BackupCategory>) {
         try {
             if (job?.isCancelled == false) {
-                restoreHelper.showProgressNotification(restoreProgress, totalAmount, backupManga.title)
+                restoreHelper.showProgressNotification(
+                    restoreProgress,
+                    totalAmount,
+                    backupManga.title
+                )
                 restoreProgress += 1
             } else {
                 throw java.lang.Exception("Job was cancelled")

@@ -2,26 +2,23 @@ package eu.kanade.tachiyomi.widget.preference
 
 import android.content.Context
 import android.util.AttributeSet
-import android.view.View
-import androidx.core.content.ContextCompat
+import android.widget.ImageView
 import androidx.preference.Preference
 import androidx.preference.PreferenceViewHolder
-import com.mikepenz.iconics.IconicsDrawable
 import com.mikepenz.iconics.typeface.library.community.material.CommunityMaterial
-import com.mikepenz.iconics.utils.colorInt
-import com.mikepenz.iconics.utils.sizeDp
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.source.online.HttpSource
-import kotlinx.android.synthetic.main.pref_item_source.view.*
+import eu.kanade.tachiyomi.util.system.create
+import eu.kanade.tachiyomi.util.system.createWithColorRes
 
 class SiteLoginPreference @JvmOverloads constructor(
     context: Context,
     val source: HttpSource,
-    attrs: AttributeSet? = null
+    attrs: AttributeSet? = null,
 ) : Preference(context, attrs) {
 
     init {
-        layoutResource = R.layout.pref_item_source
+        widgetLayoutResource = R.layout.pref_widget_imageview
     }
 
     private var onLoginClick: () -> Unit = {}
@@ -31,24 +28,17 @@ class SiteLoginPreference @JvmOverloads constructor(
         holder.itemView.setOnClickListener {
             onLoginClick()
         }
-        val loginFrame = holder.itemView.login_frame
-        val color = if (source.isLogged())
-            ContextCompat.getColor(context, R.color.material_green_500)
-        else
-            ContextCompat.getColor(context, R.color.material_blue_grey_300)
 
-        holder.itemView.login
-            .setImageDrawable(
-                IconicsDrawable(context, CommunityMaterial.Icon.cmd_account_circle).apply {
-                    sizeDp = 24
-                    colorInt = color
-                }
-            )
-
-        loginFrame.visibility = View.VISIBLE
-        loginFrame.setOnClickListener {
-            onLoginClick()
-        }
+        (holder.findViewById(R.id.image_view) as? ImageView)?.setImageDrawable(
+            when (source.isLogged()) {
+                true -> CommunityMaterial.Icon.cmd_account_circle.create(context, 24f)
+                false -> CommunityMaterial.Icon.cmd_account_circle.createWithColorRes(
+                    context,
+                    24f,
+                    R.color.material_on_surface_disabled
+                )
+            }
+        )
     }
 
     fun setOnLoginClickListener(block: () -> Unit) {

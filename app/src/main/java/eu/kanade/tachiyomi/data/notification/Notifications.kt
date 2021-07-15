@@ -13,12 +13,32 @@ import eu.kanade.tachiyomi.util.system.notificationManager
  */
 object Notifications {
 
+    object Channel {
+        const val Status = "status_channel"
+        const val Tracking = "tracking_channel"
+    }
+
+    object Id {
+        object Status {
+            const val Progress = -1001
+            const val Complete = -1002
+            const val Error = -1003
+        }
+
+        object Tracking {
+            const val Progress = -2001
+            const val Complete = -2002
+            const val Error = -2003
+        }
+    }
+
     /**
      * Common notification channel and ids used anywhere.
      */
     const val CHANNEL_COMMON = "common_channel"
     const val ID_UPDATER = 1
     const val ID_DOWNLOAD_IMAGE = 2
+    const val ID_INSTALL = 3
 
     /**
      * Notification channel and ids used by the library updater.
@@ -48,13 +68,6 @@ object Notifications {
     /**
      * Notification channel and ids used for backup and restore.
      */
-    const val CHANNEL_SIMILAR = "similar_channel"
-    const val ID_SIMILAR_PROGRESS = -401
-    const val ID_SIMILAR_COMPLETE = -402
-
-    /**
-     * Notification channel and ids used for backup and restore.
-     */
     private const val GROUP_BACKUP_RESTORE = "group_backup_restore"
     const val CHANNEL_BACKUP_RESTORE_PROGRESS = "backup_restore_progress_channel"
     const val ID_BACKUP_PROGRESS = -501
@@ -72,6 +85,13 @@ object Notifications {
     const val ID_CRASH_LOGS = -601
 
     /**
+     * Notification channel for migration.
+     */
+    const val CHANNEL_V5_MIGRATION = "v5_migration_channel"
+    const val ID_V5_MIGRATION_PROGRESS = -901
+    const val ID_V5_MIGRATION_ERROR = -902
+
+    /**
      * Creates the notification channels introduced in Android Oreo.
      *
      * @param context The application context.
@@ -79,7 +99,10 @@ object Notifications {
     fun createChannels(context: Context) {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         listOf(
-            NotificationChannelGroup(GROUP_BACKUP_RESTORE, context.getString(R.string.group_backup_restore)),
+            NotificationChannelGroup(
+                GROUP_BACKUP_RESTORE,
+                context.getString(R.string.group_backup_restore)
+            ),
             NotificationChannelGroup(GROUP_DOWNLOADER, context.getString(R.string.group_downloader))
         ).forEach(context.notificationManager::createNotificationChannelGroup)
 
@@ -97,21 +120,24 @@ object Notifications {
                 setShowBadge(false)
             },
             NotificationChannel(
-                CHANNEL_DOWNLOADER_PROGRESS, context.getString(R.string.downloads),
+                CHANNEL_DOWNLOADER_PROGRESS,
+                context.getString(R.string.downloads),
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
                 group = GROUP_DOWNLOADER
                 setShowBadge(false)
             },
             NotificationChannel(
-                CHANNEL_DOWNLOADER_COMPLETE, context.getString(R.string.download_complete),
+                CHANNEL_DOWNLOADER_COMPLETE,
+                context.getString(R.string.download_complete),
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
                 group = GROUP_DOWNLOADER
                 setShowBadge(false)
             },
             NotificationChannel(
-                CHANNEL_DOWNLOADER_ERROR, context.getString(R.string.download_error),
+                CHANNEL_DOWNLOADER_ERROR,
+                context.getString(R.string.download_error),
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
                 group = GROUP_DOWNLOADER
@@ -123,14 +149,16 @@ object Notifications {
                 NotificationManager.IMPORTANCE_DEFAULT
             ),
             NotificationChannel(
-                CHANNEL_BACKUP_RESTORE_PROGRESS, context.getString(R.string.backup_restore_progress),
+                CHANNEL_BACKUP_RESTORE_PROGRESS,
+                context.getString(R.string.backup_restore_progress),
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
                 group = GROUP_BACKUP_RESTORE
                 setShowBadge(false)
             },
             NotificationChannel(
-                CHANNEL_BACKUP_RESTORE_COMPLETE, context.getString(R.string.backup_restore_complete),
+                CHANNEL_BACKUP_RESTORE_COMPLETE,
+                context.getString(R.string.backup_restore_complete),
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
                 group = GROUP_BACKUP_RESTORE
@@ -138,7 +166,8 @@ object Notifications {
                 setSound(null, null)
             },
             NotificationChannel(
-                CHANNEL_BACKUP_RESTORE_ERROR, context.getString(R.string.restore_error),
+                CHANNEL_BACKUP_RESTORE_ERROR,
+                context.getString(R.string.restore_error),
                 NotificationManager.IMPORTANCE_HIGH
             ).apply {
                 group = GROUP_BACKUP_RESTORE
@@ -146,8 +175,28 @@ object Notifications {
                 setSound(null, null)
             },
             NotificationChannel(
-                CHANNEL_SIMILAR,
-                context.getString(R.string.similar),
+                Channel.Status,
+                context.getString(R.string.status_channel),
+                NotificationManager.IMPORTANCE_HIGH
+            ),
+            NotificationChannel(
+                CHANNEL_V5_MIGRATION,
+                context.getString(R.string.v5_migration_service),
+                NotificationManager.IMPORTANCE_HIGH
+            ).apply {
+                setShowBadge(false)
+                setSound(null, null)
+            },
+            NotificationChannel(
+                Channel.Status,
+                context.getString(R.string.sync_follows_to_library),
+                NotificationManager.IMPORTANCE_LOW
+            ).apply {
+                setShowBadge(false)
+            },
+            NotificationChannel(
+                Channel.Tracking,
+                context.getString(R.string.refresh_tracking_metadata),
                 NotificationManager.IMPORTANCE_LOW
             ).apply {
                 setShowBadge(false)

@@ -14,15 +14,22 @@ import com.elvishew.xlog.printer.file.naming.DateFileNameGenerator
 import eu.kanade.tachiyomi.BuildConfig
 import eu.kanade.tachiyomi.R
 import java.io.File
+import kotlin.time.Duration
 import kotlin.time.ExperimentalTime
-import kotlin.time.days
 
 @OptIn(ExperimentalTime::class)
 class XLogSetup(context: Context) {
+
+    private val defaultFolder =
+        context.getString(R.string.app_name) + when (BuildConfig.DEBUG) {
+            true -> "_DEBUG"
+            false -> ""
+        }
+
     init {
         XLogLevel.init(context)
 
-        val logLevel = if (XLogLevel.shouldLog(XLogLevel.EXTRA)) {
+        val logLevel = if (XLogLevel.shouldLog(XLogLevel.EXTRA) || BuildConfig.DEBUG) {
             LogLevel.ALL
         } else {
             LogLevel.WARN
@@ -36,9 +43,10 @@ class XLogSetup(context: Context) {
             .build()
 
         val printers = mutableListOf<Printer>(AndroidPrinter())
+
         val logFolder = File(
             Environment.getExternalStorageDirectory().absolutePath + File.separator +
-                context.getString(R.string.app_name),
+                defaultFolder,
             "logs"
         )
         printers += FilePrinter
@@ -47,10 +55,13 @@ class XLogSetup(context: Context) {
             )
             .fileNameGenerator(object : DateFileNameGenerator() {
                 override fun generateFileName(logLevel: Int, timestamp: Long): String {
-                    return super.generateFileName(logLevel, timestamp) + "-${BuildConfig.BUILD_TYPE}"
+                    return super.generateFileName(
+                        logLevel,
+                        timestamp
+                    ) + "-${BuildConfig.BUILD_TYPE}.txt"
                 }
             })
-            .cleanStrategy(FileLastModifiedCleanStrategy(1.days.inMilliseconds.toLong()))
+            .cleanStrategy(FileLastModifiedCleanStrategy(Duration.days(1).inWholeMilliseconds))
             .backupStrategy(NeverBackupStrategy())
             .build()
 

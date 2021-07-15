@@ -1,9 +1,11 @@
 package eu.kanade.tachiyomi.ui.similar
 
-import android.app.Activity
 import android.os.Bundle
 import android.view.Menu
+import android.view.MenuInflater
 import android.view.View
+import androidx.core.view.isVisible
+import com.google.android.material.snackbar.Snackbar
 import com.mikepenz.iconics.typeface.library.community.material.CommunityMaterial
 import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.database.models.Manga
@@ -11,13 +13,16 @@ import eu.kanade.tachiyomi.source.Source
 import eu.kanade.tachiyomi.ui.manga.similar.SimilarPresenter
 import eu.kanade.tachiyomi.ui.source.browse.BrowseSourceController
 import eu.kanade.tachiyomi.ui.source.browse.BrowseSourcePresenter
-import eu.kanade.tachiyomi.util.view.gone
-import kotlinx.android.synthetic.main.browse_source_controller.*
+import eu.kanade.tachiyomi.util.system.dpToPx
+import eu.kanade.tachiyomi.util.view.setStyle
+import eu.kanade.tachiyomi.util.view.snack
 
 /**
  * Controller that shows the latest manga from the catalogue. Inherit [BrowseCatalogueController].
  */
 class SimilarController(bundle: Bundle) : BrowseSourceController(bundle) {
+
+    lateinit var similarPresenter: SimilarPresenter
 
     constructor(manga: Manga, source: Source) : this(
         Bundle().apply {
@@ -32,22 +37,28 @@ class SimilarController(bundle: Bundle) : BrowseSourceController(bundle) {
     }
 
     override fun createPresenter(): BrowseSourcePresenter {
-        return SimilarPresenter(bundle!!.getLong(MANGA_ID))
+        similarPresenter = SimilarPresenter(bundle!!.getLong(MANGA_ID), this)
+        return similarPresenter
     }
 
     override fun onViewCreated(view: View) {
         super.onViewCreated(view)
-        fab.gone()
+        binding.fab.isVisible = false
+        binding.swipeRefresh.setStyle()
+
+        binding.swipeRefresh.setProgressViewOffset(false, 20.dpToPx, binding.swipeRefresh.progressViewEndOffset + 25.dpToPx)
+        binding.swipeRefresh.isEnabled = true
+        binding.swipeRefresh.setOnRefreshListener {
+            similarPresenter.refreshSimilarManga()
+        }
     }
 
-    override fun onActivityPaused(activity: Activity) {
-        super.onActivityPaused(activity)
+    override fun onCreateOptionsMenu(menu: Menu, inflater: MenuInflater) {
     }
 
-    override fun onPrepareOptionsMenu(menu: Menu) {
-        super.onPrepareOptionsMenu(menu)
-        menu.findItem(R.id.action_search).isVisible = false
-        menu.findItem(R.id.action_open_in_web_view).isVisible = false
+    fun showUserMessage(message: String) {
+        binding.swipeRefresh.isRefreshing = false
+        view?.snack(message, Snackbar.LENGTH_LONG)
     }
 
     /**
@@ -57,13 +68,9 @@ class SimilarController(bundle: Bundle) : BrowseSourceController(bundle) {
      */
     override fun onAddPageError(error: Throwable) {
         super.onAddPageError(error)
-        empty_view.show(
+        binding.emptyView.show(
             CommunityMaterial.Icon.cmd_compass_off,
             "No Similar Manga found"
         )
-    }
-
-    override fun expandSearch() {
-        activity?.onBackPressed()
     }
 }

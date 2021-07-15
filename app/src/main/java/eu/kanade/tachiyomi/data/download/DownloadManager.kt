@@ -106,10 +106,11 @@ class DownloadManager(val context: Context) {
         queue.add(0, download)
         reorderQueue(queue)
         if (isPaused()) {
-            if (DownloadService.isRunning(context))
+            if (DownloadService.isRunning(context)) {
                 downloader.start()
-            else
+            } else {
                 DownloadService.start(context)
+            }
         }
     }
 
@@ -247,8 +248,14 @@ class DownloadManager(val context: Context) {
                 }
                 queue.remove(chapters)
                 val chapterDirs =
-                    provider.findChapterDirs(chapters, manga, source) + provider.findTempChapterDirs(
-                        chapters, manga, source
+                    provider.findChapterDirs(
+                        chapters,
+                        manga,
+                        source
+                    ) + provider.findTempChapterDirs(
+                        chapters,
+                        manga,
+                        source
                     )
                 chapterDirs.forEach { it.delete() }
                 cache.removeChapters(chapters, manga)
@@ -276,7 +283,13 @@ class DownloadManager(val context: Context) {
      * @param manga the manga of the chapters.
      * @param source the source of the chapters.
      */
-    fun cleanupChapters(allChapters: List<Chapter>, manga: Manga, source: Source, removeRead: Boolean, removeNonFavorite: Boolean): Int {
+    fun cleanupChapters(
+        allChapters: List<Chapter>,
+        manga: Manga,
+        source: Source,
+        removeRead: Boolean,
+        removeNonFavorite: Boolean,
+    ): Int {
         var cleaned = 0
 
         if (removeNonFavorite && !manga.favorite) {
@@ -324,6 +337,7 @@ class DownloadManager(val context: Context) {
         queue.remove(manga)
         provider.findMangaDir(manga, sourceManager.getMangadex())?.delete()
         cache.removeManga(manga)
+        queue.updateListeners()
     }
 
     /**
@@ -366,6 +380,11 @@ class DownloadManager(val context: Context) {
         } else {
             XLog.e("Could not rename downloaded chapter: %s.", oldName)
         }
+    }
+
+    // forceRefresh the cache
+    fun refreshCache() {
+        cache.forceRenewCache()
     }
 
     fun addListener(listener: DownloadQueue.DownloadListener) = queue.addListener(listener)

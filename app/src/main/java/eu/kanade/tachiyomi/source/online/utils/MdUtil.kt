@@ -1,31 +1,52 @@
 package eu.kanade.tachiyomi.source.online.utils
 
+import eu.kanade.tachiyomi.data.preference.PreferencesHelper
 import eu.kanade.tachiyomi.source.model.SChapter
 import eu.kanade.tachiyomi.source.model.SManga
+import eu.kanade.tachiyomi.source.online.dto.MangaDto
 import kotlinx.serialization.json.Json
+import okhttp3.Headers
 import org.jsoup.parser.Parser
+import java.text.SimpleDateFormat
+import java.util.Locale
+import java.util.TimeZone
 import kotlin.math.floor
 
 class MdUtil {
 
     companion object {
-        const val cdnUrl = "https://mangadex.org" // "https://s0.mangadex.org"
+        const val cdnUrl = "https://uploads.mangadex.org"
         const val baseUrl = "https://mangadex.org"
-        const val randMangaPage = "/manga/"
         const val apiUrl = "https://api.mangadex.org"
-        const val apiUrlCache = "https://raw.githubusercontent.com/goldbattle/MangadexRecomendations/master/output/api/"
-        const val apiManga = "/v2/manga/"
-        const val includeChapters = "?include=chapters"
-        const val oldApiChapter = "/api/chapter/"
-        const val newApiChapter = "/v2/chapter/"
-        const val apiChapterSuffix = "?mark_read=0"
-        const val groupSearchUrl = "$baseUrl/groups/0/1/"
-        const val followsAllApi = "/v2/user/me/followed-manga"
-        const val isLoggedInApi = "/v2/user/me"
-        const val followsMangaApi = "/v2/user/me/manga/"
-        const val apiCovers = "/covers"
-        const val reportUrl = "https://api.mangadex.network/report"
-        const val imageUrl = "$baseUrl/data"
+        const val imageUrlCacheNotFound =
+            "https://cdn.statically.io/img/raw.githubusercontent.com/CarlosEsco/Neko/master/.github/manga_cover_not_found.png"
+        const val chapterUrl = "$apiUrl/chapter/"
+        const val chapterSuffix = "/chapter/"
+        const val loginUrl = "$apiUrl/auth/login"
+        const val groupUrl = "$apiUrl/group"
+        const val mangaUrl = "$apiUrl/manga"
+        const val userFollowsUrl = "$apiUrl/user/follows/manga"
+        const val readingStatusesUrl = "$apiUrl/manga/status"
+        fun getReadingStatusUrl(id: String) = "$apiUrl/manga/$id/status"
+
+        fun coverUrl(mangaId: String, coverId: String) =
+            "$apiUrl/cover?manga[]=$mangaId&ids[]=$coverId"
+
+        const val similarCacheMapping = "https://api.similarmanga.com/mapping/mdex2search.csv"
+        const val similarCacheMangaList = "https://api.similarmanga.com/manga/"
+
+        const val mangaLimit = 20
+        const val latestChapterLimit = 100
+
+        /**
+         * Get the manga offset pages are 1 based, so subtract 1
+         */
+        fun getMangaListOffset(page: Int): String = (mangaLimit * (page - 1)).toString()
+
+        /**
+         * Get the latest chapter  offset pages are 1 based, so subtract 1
+         */
+        fun getLatestChapterListOffset(page: Int): Int = (latestChapterLimit * (page - 1))
 
         val jsonParser =
             Json {
@@ -38,6 +59,11 @@ class MdUtil {
 
         private const
         val scanlatorSeparator = " & "
+
+        const val contentRatingSafe = "safe"
+        const val contentRatingSuggestive = "suggestive"
+        const val contentRatingErotica = "erotica"
+        const val contentRatingPornographic = "pornographic"
 
         val validOneShotFinalChapters = listOf("0", "1")
 
@@ -157,20 +183,11 @@ class MdUtil {
 
         // Get the ID from the manga url
         fun getMangaId(url: String): String {
-            val lastSection = url.trimEnd('/').substringAfterLast("/")
-            return if (lastSection.toIntOrNull() != null) {
-                lastSection
-            } else {
-                // this occurs if person has manga from before that had the id/name/
-                url.trimEnd('/').substringBeforeLast("/").substringAfterLast("/")
-            }
+            val id = url.trimEnd('/').substringAfterLast("/")
+            return id
         }
 
-        fun getChapterId(url: String) = url.substringBeforeLast(apiChapterSuffix).substringAfterLast("/")
-
-        // creates the manga url from the browse for the api
-        fun modifyMangaUrl(url: String): String =
-            url.replace("/title/", "/manga/").substringBeforeLast("/") + "/"
+        fun getChapterId(url: String) = url.substringAfterLast("/")
 
         fun cleanString(string: String): String {
             var cleanedString = string
@@ -201,14 +218,6 @@ class MdUtil {
                 newDescription = newDescription.replace(it, "")
             }
             return cleanString(newDescription)
-        }
-
-        fun getImageUrl(attr: String): String {
-            // Some images are hosted elsewhere
-            if (attr.startsWith("http")) {
-                return attr
-            }
-            return baseUrl + attr
         }
 
         fun getScanlators(scanlators: String): List<String> {
@@ -244,5 +253,30 @@ class MdUtil {
             }
             return null
         }
+
+        val dateFormatter = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss+SSS", Locale.US)
+            .apply { timeZone = TimeZone.getTimeZone("UTC") }
+
+        fun parseDate(dateAsString: String): Long =
+            dateFormatter.parse(dateAsString)?.time ?: 0
+
+        fun createMangaEntry(json: MangaDto, coverUrl: String?): SManga {
+            return SManga.create().apply {
+                url = "/title/" + json.data.id
+                title = cleanString(json.data.attributes.title["en"]!!)
+                thumbnail_url = coverUrl
+            }
+        }
+
+        fun cdnCoverUrl(dexId: String, fileName: String): String {
+            return "$cdnUrl/covers/$dexId/$fileName"
+        }
+
+        fun getLangsToShow(preferences: PreferencesHelper) =
+            preferences.langsToShow().get().split(",")
+
+        fun getAuthHeaders(headers: Headers, preferences: PreferencesHelper) =
+            headers.newBuilder().add("Authorization", "Bearer ${preferences.sessionToken()!!}")
+                .build()
     }
 }

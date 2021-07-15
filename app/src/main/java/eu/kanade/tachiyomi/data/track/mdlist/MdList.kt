@@ -5,7 +5,6 @@ import android.content.Context
 import android.graphics.Color
 import com.elvishew.xlog.XLog
 import eu.kanade.tachiyomi.R
-import eu.kanade.tachiyomi.data.database.DatabaseHelper
 import eu.kanade.tachiyomi.data.database.models.Manga
 import eu.kanade.tachiyomi.data.database.models.Track
 import eu.kanade.tachiyomi.data.track.TrackManager
@@ -22,9 +21,8 @@ import uy.kohesive.injekt.api.get
 class MdList(private val context: Context, id: Int) : TrackService(id) {
 
     private val mdex by lazy { Injekt.get<SourceManager>().getMangadex() }
-    private val db: DatabaseHelper by lazy { Injekt.get<DatabaseHelper>() }
 
-    override val name = "MDList"
+    override fun nameRes() = R.string.mdlist
 
     override fun getLogo(): Int {
         return R.drawable.ic_tracker_mangadex_logo
@@ -47,7 +45,11 @@ class MdList(private val context: Context, id: Int) : TrackService(id) {
 
     override fun displayScore(track: Track) = track.score.toInt().toString()
 
-    override suspend fun update(track: Track): Track {
+    override suspend fun add(track: Track): Track {
+        throw Exception("Not Used")
+    }
+
+    override suspend fun update(track: Track, setToReadStatus: Boolean): Track {
         return withContext(Dispatchers.IO) {
             try {
                 val manga = db.getManga(track.tracking_url.substringAfter(".org"), mdex.id)
@@ -94,6 +96,8 @@ class MdList(private val context: Context, id: Int) : TrackService(id) {
 
     override fun isCompletedStatus(index: Int) =
         getStatusList()[index] == FollowStatus.COMPLETED.int
+
+    override fun completedStatus() = FollowStatus.COMPLETED.int
 
     override suspend fun bind(track: Track): Track {
         val remoteTrack = mdex.fetchTrackingInfo(track.tracking_url)

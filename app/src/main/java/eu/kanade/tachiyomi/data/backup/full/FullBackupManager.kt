@@ -2,6 +2,7 @@ package eu.kanade.tachiyomi.data.backup.full
 
 import android.content.Context
 import android.net.Uri
+import com.elvishew.xlog.XLog
 import com.hippo.unifile.UniFile
 import eu.kanade.tachiyomi.data.backup.BackupCreateService.Companion.BACKUP_CATEGORY
 import eu.kanade.tachiyomi.data.backup.BackupCreateService.Companion.BACKUP_CATEGORY_MASK
@@ -35,7 +36,6 @@ import kotlinx.serialization.protobuf.ProtoBuf
 import okio.buffer
 import okio.gzip
 import okio.sink
-import timber.log.Timber
 import uy.kohesive.injekt.injectLazy
 import kotlin.math.max
 
@@ -59,7 +59,7 @@ class FullBackupManager(val context: Context) {
         var backup: Backup? = null
 
         databaseHelper.inTransaction {
-            val databaseManga = databaseHelper.getFavoriteMangas().executeAsBlocking()
+            val databaseManga = databaseHelper.getFavoriteMangaList().executeAsBlocking()
 
             backup = Backup(
                 backupManga(databaseManga, flags),
@@ -95,13 +95,13 @@ class FullBackupManager(val context: Context) {
             file.openOutputStream().sink().gzip().buffer().use { it.write(byteArray) }
             return file.uri.toString()
         } catch (e: Exception) {
-            Timber.e(e)
+            XLog.e(e)
             throw e
         }
     }
 
-    private fun backupManga(mangas: List<Manga>, flags: Int): List<BackupManga> {
-        return mangas.map {
+    private fun backupManga(mangaList: List<Manga>, flags: Int): List<BackupManga> {
+        return mangaList.map {
             backupMangaObject(it, flags)
         }
     }
@@ -236,7 +236,11 @@ class FullBackupManager(val context: Context) {
      * @param manga the manga whose categories have to be restored.
      * @param categories the categories to restore.
      */
-    internal fun restoreCategoriesForManga(manga: Manga, categories: List<Int>, backupCategories: List<BackupCategory>) {
+    internal fun restoreCategoriesForManga(
+        manga: Manga,
+        categories: List<Int>,
+        backupCategories: List<BackupCategory>,
+    ) {
         val dbCategories = databaseHelper.getCategories().executeAsBlocking()
         val mangaCategoriesToUpdate = ArrayList<MangaCategory>(categories.size)
         categories.forEach { backupCategoryOrder ->
@@ -253,8 +257,8 @@ class FullBackupManager(val context: Context) {
 
         // Update database
         if (mangaCategoriesToUpdate.isNotEmpty()) {
-            databaseHelper.deleteOldMangasCategories(listOf(manga)).executeAsBlocking()
-            databaseHelper.insertMangasCategories(mangaCategoriesToUpdate).executeAsBlocking()
+            databaseHelper.deleteOldMangaListCategories(listOf(manga)).executeAsBlocking()
+            databaseHelper.insertMangaListCategories(mangaCategoriesToUpdate).executeAsBlocking()
         }
     }
 
@@ -297,7 +301,8 @@ class FullBackupManager(val context: Context) {
         // Fix foreign keys with the current manga id
         tracks.map { it.manga_id = manga.id!! }
 
-        val validTracks = tracks.filter { it.sync_id == TrackManager.MYANIMELIST || it.sync_id == TrackManager.ANILIST || it.sync_id == TrackManager.KITSU }
+        val validTracks =
+            tracks.filter { it.sync_id == TrackManager.MYANIMELIST || it.sync_id == TrackManager.ANILIST || it.sync_id == TrackManager.KITSU }
 
         if (validTracks.isEmpty()) {
             // always create an mdlist tracker
@@ -322,7 +327,8 @@ class FullBackupManager(val context: Context) {
                         if (track.library_id != dbTrack.library_id) {
                             dbTrack.library_id = track.library_id
                         }
-                        dbTrack.last_chapter_read = max(dbTrack.last_chapter_read, track.last_chapter_read)
+                        dbTrack.last_chapter_read =
+                            max(dbTrack.last_chapter_read, track.last_chapter_read)
                         isInDatabase = true
                         trackToUpdate.add(dbTrack)
                         break

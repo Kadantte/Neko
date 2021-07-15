@@ -1,16 +1,16 @@
 package eu.kanade.tachiyomi.ui.reader.loader
 
+import com.elvishew.xlog.XLog
+import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.database.models.Manga
 import eu.kanade.tachiyomi.data.download.DownloadManager
 import eu.kanade.tachiyomi.source.SourceManager
 import eu.kanade.tachiyomi.source.model.isMergedChapter
-import eu.kanade.tachiyomi.source.online.HttpSource
 import eu.kanade.tachiyomi.ui.reader.model.ReaderChapter
 import rx.Completable
 import rx.Observable
 import rx.android.schedulers.AndroidSchedulers
 import rx.schedulers.Schedulers
-import com.elvishew.xlog.XLog
 
 /**
  * Loader used to retrieve the [PageLoader] for a given chapter.
@@ -18,7 +18,7 @@ import com.elvishew.xlog.XLog
 class ChapterLoader(
     private val downloadManager: DownloadManager,
     private val manga: Manga,
-    private val sourceManager: SourceManager
+    private val sourceManager: SourceManager,
 ) {
 
     /**
@@ -33,10 +33,10 @@ class ChapterLoader(
         return Observable.just(chapter)
             .doOnNext { chapter.state = ReaderChapter.State.Loading }
             .observeOn(Schedulers.io())
-            .flatMap {
+            .flatMap { readerChapter ->
                 XLog.d("Loading pages for ${chapter.chapter.name}")
 
-                val loader = getPageLoader(it)
+                val loader = getPageLoader(readerChapter)
                 chapter.pageLoader = loader
 
                 loader.getPages().take(1).doOnNext { pages ->
@@ -46,7 +46,7 @@ class ChapterLoader(
             .observeOn(AndroidSchedulers.mainThread())
             .doOnNext { pages ->
                 if (pages.isEmpty()) {
-                    throw Exception("Page list is empty")
+                    throw Exception(downloadManager.context.getString(R.string.no_pages_found))
                 }
 
                 chapter.state = ReaderChapter.State.Loaded(pages)
@@ -73,11 +73,11 @@ class ChapterLoader(
      */
     private fun getPageLoader(chapter: ReaderChapter): PageLoader {
         val isDownloaded = downloadManager.isChapterDownloaded(chapter.chapter, manga, true)
-        val source = if (chapter.chapter.isMergedChapter()) sourceManager.getMergeSource() else sourceManager.getMangadex()
+        val source =
+            if (chapter.chapter.isMergedChapter()) sourceManager.getMergeSource() else sourceManager.getMangadex()
         return when {
             isDownloaded -> DownloadPageLoader(chapter, manga, source, downloadManager)
-            source is HttpSource -> HttpPageLoader(chapter, source)
-            else -> error("Loader not implemented")
+            else -> HttpPageLoader(chapter, source)
         }
     }
 }

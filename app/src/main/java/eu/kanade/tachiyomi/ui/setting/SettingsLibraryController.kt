@@ -6,7 +6,11 @@ import eu.kanade.tachiyomi.R
 import eu.kanade.tachiyomi.data.database.DatabaseHelper
 import eu.kanade.tachiyomi.data.database.models.Category
 import eu.kanade.tachiyomi.data.library.LibraryUpdateJob
+import eu.kanade.tachiyomi.jobs.library.DelayedLibrarySuggestionsJob
 import eu.kanade.tachiyomi.ui.category.CategoryController
+import eu.kanade.tachiyomi.ui.library.LibraryPresenter
+import eu.kanade.tachiyomi.ui.library.display.TabbedLibraryDisplaySheet
+import eu.kanade.tachiyomi.util.system.launchIO
 import eu.kanade.tachiyomi.util.view.withFadeTransaction
 import uy.kohesive.injekt.Injekt
 import uy.kohesive.injekt.api.get
@@ -16,7 +20,7 @@ class SettingsLibraryController : SettingsController() {
 
     private val db: DatabaseHelper = Injekt.get()
 
-    override fun setupPreferenceScreen(screen: PreferenceScreen) = with(screen) {
+    override fun setupPreferenceScreen(screen: PreferenceScreen) = screen.apply {
         titleRes = R.string.library
         preferenceCategory {
             titleRes = R.string.general
@@ -26,6 +30,36 @@ class SettingsLibraryController : SettingsController() {
                 summaryRes = R.string.when_sorting_ignore_articles
                 defaultValue = false
             }
+
+            switchPreference {
+                key = Keys.showLibrarySearchSuggestions
+                titleRes = R.string.search_suggestions
+                summaryRes = R.string.search_tips_show_periodically
+
+                onChange {
+                    it as Boolean
+                    if (it) {
+                        launchIO {
+                            LibraryPresenter.setSearchSuggestion(preferences, db, Injekt.get())
+                        }
+                    } else {
+                        DelayedLibrarySuggestionsJob.setupTask(context, false)
+                        preferences.librarySearchSuggestion().set("")
+                    }
+                    true
+                }
+            }
+
+            preference {
+                key = "library_display_options"
+                isPersistent = false
+                titleRes = R.string.display_options
+                summaryRes = R.string.can_be_found_in_library_filters
+
+                onClick {
+                    TabbedLibraryDisplaySheet(this@SettingsLibraryController).show()
+                }
+            }
         }
 
         val dbCategories = db.getCategories().executeAsBlocking()
@@ -33,9 +67,16 @@ class SettingsLibraryController : SettingsController() {
         preferenceCategory {
             titleRes = R.string.categories
             preference {
+                key = "edit_categories"
+                isPersistent = false
                 val catCount = db.getCategories().executeAsBlocking().size
                 titleRes = if (catCount > 0) R.string.edit_categories else R.string.add_categories
-                if (catCount > 0) summary = context.resources.getQuantityString(R.plurals.category, catCount, catCount)
+                if (catCount > 0) summary =
+                    context.resources.getQuantityString(
+                        R.plurals.category_plural,
+                        catCount,
+                        catCount
+                    )
                 onClick { router.pushController(CategoryController().withFadeTransaction()) }
             }
             intListPreference(activity) {
@@ -44,7 +85,8 @@ class SettingsLibraryController : SettingsController() {
 
                 val categories = listOf(Category.createDefault(context)) + dbCategories
                 entries =
-                    listOf(context.getString(R.string.always_ask)) + categories.map { it.name }.toTypedArray()
+                    listOf(context.getString(R.string.always_ask)) + categories.map { it.name }
+                        .toTypedArray()
                 entryValues = listOf(-1) + categories.mapNotNull { it.id }.toList()
                 defaultValue = "-1"
 
@@ -61,30 +103,28 @@ class SettingsLibraryController : SettingsController() {
         }
 
         preferenceCategory {
-            titleRes = R.string.updates
+            titleRes = R.string.global_updates
             intListPreference(activity) {
                 key = Keys.libraryUpdateInterval
                 titleRes = R.string.library_update_frequency
                 entriesRes = arrayOf(
                     R.string.manual,
-                    R.string.hourly,
-                    R.string.every_2_hours,
-                    R.string.every_3_hours,
                     R.string.every_6_hours,
                     R.string.every_12_hours,
                     R.string.daily,
-                    R.string.every_2_days
+                    R.string.every_2_days,
+                    R.string.weekly
                 )
-                entryValues = listOf(0, 1, 2, 3, 6, 12, 24, 48)
+                entryValues = listOf(0, 6, 12, 24, 48, 168)
                 defaultValue = 24
 
                 onChange { newValue ->
                     // Always cancel the previous task, it seems that sometimes they are not updated.
-                    LibraryUpdateJob.setupTask(0)
+                    LibraryUpdateJob.setupTask(context, 0)
 
                     val interval = newValue as Int
                     if (interval > 0) {
-                        LibraryUpdateJob.setupTask(interval)
+                        LibraryUpdateJob.setupTask(context, interval)
                     }
                     true
                 }
@@ -94,14 +134,14 @@ class SettingsLibraryController : SettingsController() {
                 titleRes = R.string.library_update_restriction
                 entriesRes = arrayOf(R.string.wifi, R.string.charging)
                 entryValues = listOf("wifi", "ac")
-                customSummaryRes = R.string.library_update_restriction_summary
+                summaryRes = R.string.library_update_restriction_summary
 
                 preferences.libraryUpdateInterval().asObservable()
                     .subscribeUntilDestroy { isVisible = it > 0 }
 
                 onChange {
                     // Post to event looper to allow the preference to be updated.
-                    Handler().post { LibraryUpdateJob.setupTask() }
+                    Handler().post { LibraryUpdateJob.setupTask(context) }
                     true
                 }
             }
@@ -118,36 +158,34 @@ class SettingsLibraryController : SettingsController() {
                 // The following array lines up with the list rankingScheme in:
                 // ../../data/library/LibraryUpdateRanker.kt
                 entriesRes = arrayOf(
-                    R.string.alphabetically, R.string.last_updated, R.string.next_updated
+                    R.string.alphabetically,
+                    R.string.last_updated,
+                    R.string.next_updated
                 )
                 entryRange = 0..2
                 defaultValue = 0
                 summaryRes = R.string.select_order_to_update
             }
 
-            multiSelectListPreferenceMat(activity) {
+            triStateListPreference(activity) {
                 key = Keys.libraryUpdateCategories
-                titleRes = R.string.categories_to_include_in_global_update
-                entries = dbCategories.map { it.name }
-                entryValues = dbCategories.map { it.id.toString() }
+                excludeKey = Keys.libraryUpdateCategoriesExclude
+                titleRes = R.string.categories
+
+                val categories = listOf(Category.createDefault(context)) + dbCategories
+                entries = categories.map { it.name }
+                entryValues = categories.map { it.id.toString() }
+
                 allSelectionRes = R.string.all
-
-                preferences.libraryUpdateCategories().asObservable().subscribeUntilDestroy {
-                    val selectedCategories =
-                        it.mapNotNull { id -> dbCategories.find { it.id == id.toInt() } }
-                            .sortedBy { it.order }
-
-                    customSummary =
-                        if (selectedCategories.isEmpty()) context.getString(R.string.all)
-                        else selectedCategories.joinToString { it.name }
-                }
             }
+
             intListPreference(activity) {
                 key = Keys.updateOnRefresh
                 titleRes = R.string.categories_on_manual
 
                 entriesRes = arrayOf(
-                    R.string.first_category, R.string.categories_in_global_update
+                    R.string.first_category,
+                    R.string.categories_in_global_update
                 )
                 entryRange = 0..1
                 defaultValue = -1
